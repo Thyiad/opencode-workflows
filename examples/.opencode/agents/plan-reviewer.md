@@ -2,7 +2,7 @@
 description: Independently review a draft milestone plan (requirements, not code) and report blocking issues
 mode: subagent
 
-model: openai/gpt-6-sol#xhigh
+model: openai/gpt-6.1-sol#xhigh
 
 # OpenCode v2 permission rules: the LAST matching rule wins, so the catch-all
 # deny comes first and the exceptions follow it. Read-only: no edits, no
