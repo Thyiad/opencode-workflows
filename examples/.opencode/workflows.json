@@ -1,0 +1,11 @@
+{
+  "name": "MYAPP",
+  "requiredEnv": {
+    "MYAPP_TEST_DATABASE_URL": "测试用的本机数据库连接串，见 specs/00-conventions.md"
+  },
+  "protectedDocs": ["docs/API-CONTRACT.md"],
+  "machineNotes": [
+    "本机数据库偶尔卡住：测试大面积报 connect ETIMEDOUT 时重跑一次即可。"
+  ],
+  "pipelinesDir": "scripts/pipelines"
+}

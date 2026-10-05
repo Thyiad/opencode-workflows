@@ -1,0 +1,26 @@
+{
+  "name": "opencode-workflows",
+  "version": "0.1.0",
+  "description": "Unattended opencode workflows for any repository: refine a plan, implement milestones, gate stages, mail the outcome",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "run-milestones": "src/run-milestones.mjs",
+    "run-milestones-auto": "src/run-milestones-auto.mjs",
+    "run-gated-stages": "src/run-gated-stages.mjs",
+    "refine-plan": "src/refine-plan.mjs",
+    "opencode-workflows-mail": "src/notify-mail.mjs"
+  },
+  "files": [
+    "src",
+    "examples",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}
