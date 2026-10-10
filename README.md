@@ -64,6 +64,8 @@ refine-plan --help
    .plan-refine-logs/
    ```
 
+5. **需求文档（可选）**：产品经理给出、已经确认的需求放在 `docs/requirements/<需求名>/`，作为 plan 的输入快照，不随代码更新、也不由开发修改；有变化由产品出新修订，替换旧文件。需求里的条目最好带编号（例如 `FR-` 功能、`BR-` 规则、`OOS-` 不包含项），来自需求的 `plan.md` 在开头写明需求来源、覆盖的编号、与需求的差异。模板里的 agent 已经按这个约定写好：plan 引用了需求，plan-reviewer 就按它声称覆盖的条目查漏和冲突，implementer 和 reviewer 也会读它；plan-editor 不能写 `docs/requirements/**`，示例 `workflows.json` 也把它列进了 `protectedDocs`。**不是每个 plan 都要有需求**，不引用需求的 plan 行为不变；不用这个约定的仓库什么都不用改，放在别的目录就同时改 plan-editor 的那条 `deny` 和 `protectedDocs`。OPOC-DSH 的 `docs/requirements/README.md` 是一个写好的实例（修订规则、状态表、从需求到 plan 的步骤）。
+
 ## 用法
 
 在仓库里（任意子目录都行）：

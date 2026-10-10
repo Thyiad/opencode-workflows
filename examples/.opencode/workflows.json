@@ -3,7 +3,7 @@
   "requiredEnv": {
     "MYAPP_TEST_DATABASE_URL": "测试用的本机数据库连接串，见 specs/00-conventions.md"
   },
-  "protectedDocs": ["docs/API-CONTRACT.md"],
+  "protectedDocs": ["docs/API-CONTRACT.md", "docs/requirements/**"],
   "machineNotes": [
     "本机数据库偶尔卡住：测试大面积报 connect ETIMEDOUT 时重跑一次即可。"
   ],

@@ -143,6 +143,7 @@ Before modifying code, read completely, in this order:
 1. `specs/00-conventions.md` — conventions shared by every milestone.
 2. The milestone `plan.md` at the path supplied by the command.
 3. The design documents the plan points to (for example under `docs/`) for the sections it names, and the documents attached in the milestone directory.
+4. When the plan cites a product requirement (by default under `docs/requirements/`): the items it says it covers. Not every plan has one.
 
 If a path is missing or unreadable, stop before editing and report the problem.
 
@@ -168,7 +169,7 @@ Implement the complete milestone plan.
 - Follow `specs/00-conventions.md` and the existing conventions of the package you are editing.
 - Stay within the milestone scope; its "不做" section lists what belongs to other milestones.
 - Preserve unrelated existing changes in the working tree, including untracked files.
-- Do not modify any `specs/**/plan.md`, `specs/00-conventions.md`, documents attached to a milestone (such as a contract snapshot) or the design documents the plan points to, unless the plan explicitly asks for it.
+- Do not modify any `specs/**/plan.md`, `specs/00-conventions.md`, documents attached to a milestone (such as a contract snapshot) or the design documents the plan points to, unless the plan explicitly asks for it. Never modify a product requirement the plan cites.
 - Do not commit or push.
 
 # 4. Validate

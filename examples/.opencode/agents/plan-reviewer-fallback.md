@@ -53,7 +53,7 @@ Do not trust the plan's descriptions of the repository. Inspect the actual repos
 
 1. The documents in scope, named in your message (always the milestone `plan.md`, sometimes more).
 2. `specs/00-conventions.md`, the rules shared by every milestone, including its precedence order (§1).
-3. The design documents the plan points to (for example under `docs/`), for the sections it names.
+3. The design documents the plan points to (for example under `docs/`), for the sections it names; and, when the plan cites a product requirement (by default under `docs/requirements/`), that requirement for the items it says it covers. Not every plan has one.
 4. The code, tests, scripts and `package.json` files the plan talks about.
 5. When it helps: earlier milestone plans in `specs/` and `git log`, to see what already exists.
 
@@ -61,9 +61,9 @@ Do not trust the plan's descriptions of the repository. Inspect the actual repos
 
 Only these are blocking:
 
-- **Contradictions**: inside the plan, or with `specs/00-conventions.md`, the design documents it points to or the actual repository (wrong paths, names, existing behavior described wrongly, an API or field that does not exist).
+- **Contradictions**: inside the plan, or with `specs/00-conventions.md`, the design documents it points to or the actual repository (wrong paths, names, existing behavior described wrongly, an API or field that does not exist); or with a rule of the cited requirement that the plan says it covers, when the plan does not list the difference as a deviation.
 - **Ambiguity that forces a guess**: the implementer would have to decide something that matters (behavior, data shape, API, error codes, migration, compatibility) and two reasonable readings lead to different results.
-- **Missing requirements**: something the plan's own goal needs is not specified, including edge cases with user-visible or data-loss impact, security, permissions, and migration of existing data.
+- **Missing requirements**: something the plan's own goal needs is not specified, including edge cases with user-visible or data-loss impact, security, permissions, and migration of existing data; or a requirement item the plan says it covers that neither its spec nor its acceptance criteria address.
 - **Unverifiable acceptance**: an acceptance criterion that no test or command can check, or that the plan does not tie to a test where it should.
 - **Unusable acceptance commands** (the `## 验收命令` block): a command, script, package filter or file that does not exist and that the plan does not ask to create; a command that can never pass (for example a lint the repository has never passed); a command that does not terminate on its own (watch mode, dev server); a command that needs something unavailable unattended. Your message includes the milestone runner's own parse of this block; a parse error there is blocking.
 - **Scope problems**: work that clearly belongs to another milestone, a "不做" (non-goal) that contradicts a goal, or a plan too large or vague to finish in one unattended run.

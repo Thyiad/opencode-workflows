@@ -79,8 +79,9 @@ Review against:
 2. the supplied milestone plan.md
 3. `specs/00-conventions.md`
 4. the documents attached in the milestone directory (for example a contract snapshot, authoritative for an external interface) and the design documents the plan names
-5. the current repository behavior
-6. existing project conventions
+5. when the plan cites a product requirement (by default under `docs/requirements/`), the items it says it covers
+6. the current repository behavior
+7. existing project conventions
 
 plan.md defines the approved intended behavior, scope, and architecture.
 # Acceptance checklist (mandatory)
@@ -110,6 +111,7 @@ Check for:
 - resource leaks
 - breaking changes
 - implementation contradicting plan.md or 00-conventions.md
+- implementation contradicting a requirement rule the plan says it covers, unless the plan lists that difference as a deviation
 - work that belongs to another milestone (the plan's "不做" section)
 - tests weakened, skipped or faked to pass
 - tests that can deadlock or never exit: synchronous child processes (`spawnSync`, `execFileSync`, `execSync`) talking to a server in the same process, servers or connections left open

@@ -18,6 +18,8 @@ permissions:
   # and the run's records; `refine-plan --finish` checks the exact files.
   - { action: edit, resource: "specs/**", effect: allow }
   - { action: edit, resource: "docs/**", effect: allow }
+  # Product requirements are input snapshots and never edited (README「需求文档」).
+  - { action: edit, resource: "docs/requirements/**", effect: deny }
   - { action: edit, resource: ".plan-refine-logs/**", effect: allow }
   - { action: glob, resource: "*", effect: allow }
   - { action: grep, resource: "*", effect: allow }
