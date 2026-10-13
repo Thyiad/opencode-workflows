@@ -6,9 +6,9 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
-  acceptanceCheck, auditRun, baselineDiff, blockingIssueIds, changedPaths, checkRound, collectDecisions, diffStat, displaySpec, documentsInScope,
+  acceptanceCheck, auditRun, baselineDiff, batchMail, blockingIssueIds, changedPaths, checkRound, collectDecisions, diffStat, displaySpec, documentsInScope,
   fenced, finishRun, locate, mailFor,
-  outcomeOf, outsideScope, parseArgs, parseVerdict, readRounds, renderReport, repoPath, runDirsSince, section, startRun, worktreeSnapshot,
+  outcomeOf, outsideScope, parseArgs, parseVerdict, readRounds, refinableSpecs, renderReport, repoPath, runDirsSince, section, startRun, worktreeSnapshot,
 } from '../src/refine-plan.mjs'
 import { repoRootOf } from '../src/config.mjs'
 import { splitFrontmatter } from '../src/run-milestones.mjs'
@@ -62,11 +62,61 @@ test('arguments: one milestone directory, rounds, extra documents', () => {
   assert.match(parseArgs(['a', '--notify-config', 'x.env']).notifyConfig, /x\.env$/u)
 })
 
+test('arguments: a batch selects several specs with --only, --from and --to', () => {
+  const batch = parseArgs(['--only', '35,36', '--max-rounds', '3'])
+  assert.equal(batch.spec, null, 'a batch takes no milestone directory')
+  assert.equal(batch.only, '35,36')
+  assert.equal(batch.maxRounds, 3)
+  assert.equal(parseArgs(['--from', '35', '--to', '37']).from, '35')
+  assert.equal(parseArgs(['--only', '35-37,40']).only, '35-37,40')
+  assert.throws(() => parseArgs(['--only', '35', 'specs/36-foo']), /不要再给里程碑目录/u)
+  assert.throws(() => parseArgs(['--only', '35', '--start']), /不能和 --start\/--check\/--finish/u)
+  assert.throws(() => parseArgs(['--only', '35', '--finish', 'r']), /不能和 --start\/--check\/--finish/u)
+  assert.throws(() => parseArgs(['--from', '3']), /两位或以上/u)
+  assert.throws(() => parseArgs(['--only', 'foo']), /两位或以上/u)
+  assert.throws(() => parseArgs(['--from', '37', '--to', '35']), /不能大于/u)
+  assert.equal(parseArgs(['--only', '35', '--dry-run']).dryRun, true)
+})
+
+test('a batch lists numbered specs in order, skips implemented ones and needs plan.md', () => {
+  const dir = tempRepo()
+  try {
+    for (const name of ['35-foo', '36-bar', '37-done']) {
+      mkdirSync(join(dir, 'specs', name), { recursive: true })
+      writeFileSync(join(dir, 'specs', name, 'plan.md'), PLAN)
+    }
+    writeFileSync(join(dir, 'specs/37-done/STATUS'), 'APPROVED\n')
+    mkdirSync(join(dir, 'specs/38-empty'), { recursive: true })
+    const picked = refinableSpecs({ only: '35-37', from: null, to: null }, join(dir, 'specs'))
+    assert.deepEqual(picked.specs.map(item => item.rel), ['specs/35-foo', 'specs/36-bar'])
+    assert.deepEqual(picked.skipped, ['specs/37-done'])
+    assert.deepEqual(refinableSpecs({ only: null, from: '35', to: '36' }, join(dir, 'specs')).specs.map(item => item.rel), ['specs/35-foo', 'specs/36-bar'])
+    assert.throws(() => refinableSpecs({ only: '38', from: null, to: null }, join(dir, 'specs')), /找不到 specs\/38-empty\/plan\.md/u)
+    assert.deepEqual(refinableSpecs({ only: '35', from: null, to: null }, join(dir, 'no-specs')), { specs: [], skipped: [] })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('repository paths stay inside the repository', () => {
   assert.equal(repoPath('specs/35-foo/', '/repo'), 'specs/35-foo')
   assert.equal(repoPath('/repo/docs/A.md', '/repo'), 'docs/A.md')
   assert.equal(repoPath('../other', '/repo'), null)
   assert.equal(repoPath('.', '/repo'), null)
+})
+
+test('the batch mail sums the outcomes, the decisions and the time', () => {
+  const mail = batchMail([
+    { shown: 'specs/35-foo', result: 'approved', outcome: '第 2 轮评审通过', problems: [], reportFile: 'specs/35-foo/refine-report.md', durationMs: 65_000, decisions: [] },
+    { shown: 'specs/36-bar', result: 'failed', outcome: '运行检查未通过', problems: ['改动了范围以外的文件：code.js'], reportFile: 'specs/36-bar/refine-report.md', durationMs: 55_000, decisions: [{ source: 'x', text: 'y' }] },
+  ], '[REPO]')
+  assert.match(mail.subject, /^\[REPO\] ❌ plan 评审 2 个：通过 1、失败 1$/u)
+  assert.match(mail.text, /总用时：2 分 0 秒/u)
+  assert.match(mail.text, /需要你决定的问题：1 个/u)
+  assert.match(mail.text, /✅ specs\/35-foo：第 2 轮评审通过[\s\S]*改动说明：specs\/35-foo\/refine-report\.md/u)
+  assert.match(mail.text, /❌ specs\/36-bar：运行检查未通过[\s\S]*改动了范围以外的文件：code\.js/u)
+  assert.match(batchMail([{ shown: 'specs/x', result: 'unresolved', outcome: '达到 5 轮上限', problems: [], reportFile: null, durationMs: 1000, decisions: [] }], '').subject,
+    /^⚠️ plan 评审 1 个：未解决 1$/u)
 })
 
 test('the verdict is the first non-empty line only', () => {
@@ -480,6 +530,57 @@ test('end to end: the fallback reviewer is named in the report; --also reaches t
   assert.match(report(dir), /blackaicoding\/claude-opus-5#xhigh/u)
   const runDir = readdirSync(join(dir, '.plan-refine-logs')).find(name => !name.endsWith('.log'))
   assert.ok(existsSync(join(dir, '.plan-refine-logs', runDir, 'baseline/docs/API.md')))
+}))
+
+test('end to end: --only reviews several plans one after another', unix, () => withFakeRepo(async dir => {
+  mkdirSync(join(dir, 'specs/36-bar'))
+  writeFileSync(join(dir, 'specs/36-bar/plan.md'), PLAN.replace('# M99：示例', '# M99：另一个'))
+  const { code, output } = await runRefine(dir, ['--only', '35,36'])
+  assert.equal(code, 0, output)
+  assert.match(output, /批量评审 2 个规格/u)
+  assert.match(output, /✅ plan 评审 2 个：通过 2/u)
+  for (const spec of ['35-foo', '36-bar']) {
+    assert.match(readFileSync(join(dir, 'specs', spec, 'plan.md'), 'utf8'), /FIXED 1/u, spec)
+    assert.match(readFileSync(join(dir, 'specs', spec, 'refine-report.md'), 'utf8'), /第 2 轮评审通过/u, spec)
+  }
+  const status = execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' }).split('\n').filter(Boolean).sort()
+  assert.deepEqual(status, [
+    ' M specs/35-foo/plan.md', ' M specs/36-bar/plan.md',
+    '?? specs/35-foo/refine-report.md', '?? specs/36-bar/refine-report.md',
+  ], 'each plan edited, each report written, nothing else touched')
+}))
+
+test('end to end: a batch skips an already implemented spec', unix, () => withFakeRepo(async dir => {
+  mkdirSync(join(dir, 'specs/36-done'))
+  writeFileSync(join(dir, 'specs/36-done/plan.md'), PLAN)
+  writeFileSync(join(dir, 'specs/36-done/STATUS'), 'APPROVED\n')
+  const { code, output } = await runRefine(dir, ['--only', '35,36'])
+  assert.equal(code, 0, output)
+  assert.match(output, /已实现，跳过：specs\/36-done/u)
+  assert.ok(existsSync(join(dir, 'specs/35-foo/refine-report.md')))
+  assert.ok(!existsSync(join(dir, 'specs/36-done/refine-report.md')))
+}))
+
+test('end to end: a batch reports every failure and exits 1', unix, () => withFakeRepo(async dir => {
+  mkdirSync(join(dir, 'specs/36-bar'))
+  writeFileSync(join(dir, 'specs/36-bar/plan.md'), PLAN)
+  const { code, output } = await runRefine(dir, ['--only', '35,36'], { FAKE_STRAY: 'code.js' })
+  assert.equal(code, 1, output)
+  assert.match(output, /❌ plan 评审 2 个：失败 2/u)
+  for (const spec of ['35-foo', '36-bar']) {
+    assert.match(readFileSync(join(dir, 'specs', spec, 'refine-report.md'), 'utf8'), /改动了范围以外的文件/u, spec)
+  }
+}))
+
+test('end to end: a batch --dry-run lists the plans without running opencode', () => withFakeRepo(async dir => {
+  mkdirSync(join(dir, 'specs/36-bar'))
+  writeFileSync(join(dir, 'specs/36-bar/plan.md'), PLAN)
+  const { code, output } = await runRefine(dir, ['--only', '35,36', '--dry-run'])
+  assert.equal(code, 0, output)
+  assert.match(output, /批量评审 2 个规格/u)
+  assert.match(output, /规格：M99：示例（specs\/35-foo）/u)
+  assert.match(output, /规格：M99：示例（specs\/36-bar）/u)
+  assert.ok(!existsSync(join(dir, 'specs/35-foo/refine-report.md')))
 }))
 
 test('a milestone that was already implemented is refused', unix, () => withFakeRepo(async dir => {

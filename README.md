@@ -73,6 +73,9 @@ refine-plan --help
 ```bash
 refine-plan specs/35-foo --dry-run           # 看范围、模型和验收命令检查
 refine-plan specs/35-foo --max-rounds 3      # 无人值守地完善 plan
+refine-plan specs/35-foo --also docs/BUSINESS-API.md   # 这份文档也允许改
+refine-plan --only 35,36 --max-rounds 3      # 按编号批量：逐个评审多个 plan
+refine-plan --from 35 --to 37 --dry-run      # 批量看范围
 refine-plan ../OPOC/specs/01-foo             # 别的仓库里的 plan：在那个仓库里用它自己的 .opencode 跑
 
 run-milestones --dry-run                     # 列出各里程碑的状态
@@ -86,6 +89,8 @@ run-gated-stages --pipeline oauth --dry-run
 ### refine-plan
 
 plan-editor（DeepSeek）调用只读的 plan-reviewer（GPT）评审 plan，按意见修改，循环到通过或达到轮次上限。涉及用户设计决定的问题不改，标成「需人工决定」。默认只改 `plan.md`，其他文档用 `--also` 指明（只能是 `specs/` 或 `docs/` 下的）。
+
+批量：`--only 35,36`（也支持 `35-37,40` 这样的范围）或 `--from 35 --to 37` 会按编号顺序**逐个**评审本仓库 `specs/` 下的规格，每个规格一次独立的 opencode 会话和一个记录目录，共用一个 `--max-rounds` 和一份 `--also`；已实现（有 `STATUS`）的规格跳过。全部结束后发一封汇总邮件，退出码按最坏的结果取（有失败 1，否则有未解决 3，全通过 0）。批量只用于完整运行，不能和 `--start/--check/--finish` 一起用。
 
 收尾检查（无人值守和交互两种入口都做）：改动只限范围内的文档、每轮评审前都用 `--check` 记录了文档版本、通过的正是当前内容、轮次没有超限、验收命令能解析。结果写进规格目录的 `refine-report.md`；过程记录在 `.plan-refine-logs/`。不提交。退出码：0 通过，3 达到上限仍有问题，1 运行失败。
 

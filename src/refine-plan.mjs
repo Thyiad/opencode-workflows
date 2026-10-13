@@ -26,6 +26,15 @@
 //   refine-plan ../OPOC/specs/oauth-foo         # a plan in another repository
 //   refine-plan specs/25-opoc-oauth-provider    # a cross-repository placeholder: its target
 //
+//   refine-plan --only 35,36 --max-rounds 3     # several plans, one after another
+//   refine-plan --from 35 --to 37 --dry-run
+//
+// With --only/--from/--to the numbered specs of this repository's specs/ are
+// refined one after another, each in its own session and record directory.
+// run-milestones.mjs selects milestones the same way, and a spec that is
+// already implemented (its STATUS exists) is skipped. The batch shares one
+// --max-rounds and one --also list, and ends with a single summary email.
+//
 // The documents in scope are the plan.md and the --also files (paths in the
 // plan's repository). Other files next to the plan, such as a contract
 // snapshot, stay read-only unless named with --also.
@@ -58,8 +67,8 @@ import { fileURLToPath } from 'node:url'
 import { isMain, loadConfig, repoRootOf } from './config.mjs'
 import { DEFAULT_CONFIG_FILE, loadMailConfig, sendMail } from './notify-mail.mjs'
 import {
-  MIN_OPENCODE_VERSION, acceptanceCommands, crossRepoTarget, expandCommand, formatDuration, installInterruptHandler, milestoneTitle,
-  opencodeVersionSupported, processTable, run, splitFrontmatter, windowsShellCommand,
+  MILESTONE_NUMBER, MIN_OPENCODE_VERSION, acceptanceCommands, crossRepoTarget, expandCommand, formatDuration, installInterruptHandler, listMilestones,
+  milestoneTitle, opencodeVersionSupported, parseNumberSpec, processTable, run, selectMilestones, splitFrontmatter, windowsShellCommand,
 } from './run-milestones.mjs'
 
 // The current directory's repository: paths are shown relative to it.
@@ -76,11 +85,16 @@ const REVIEWER = 'plan-reviewer'
 const FALLBACK_REVIEWER = 'plan-reviewer-fallback'
 
 const USAGE = `用法：refine-plan <规格目录> [选项]
+      refine-plan --only <编号>[,<编号>|范围] [选项]     （批量，见下）
 
   例：refine-plan specs/35-foo --max-rounds 3
       refine-plan ../OPOC/specs/01-foo      （其他仓库的 plan）
+      refine-plan --only 35,36 --max-rounds 3
+      refine-plan --from 35 --to 37 --dry-run
 
 选项：
+  --only <编号>[,<编号>|范围]   批量：只评审这些编号的规格，例如 35、35,36、35-37、35-37,40
+  --from <编号> / --to <编号>   批量：评审本仓库 specs/ 里编号在这一段的规格（含两端）
   --max-rounds <n>              最多评审几轮（含最后一轮），默认 5
   --also <文件>[,<文件>]        另外允许修改的文档（相对 plan 所在仓库），可重复；默认只改 plan.md
   --agent-timeout-hours <n>     opencode 运行的超时，默认 6
@@ -90,6 +104,11 @@ const USAGE = `用法：refine-plan <规格目录> [选项]
   --dry-run                     只显示范围、模型和检查结果
   -h, --help                    显示本说明
 
+批量（--only/--from/--to）：按编号顺序逐个评审，每个规格一次独立的
+opencode 会话和一个记录目录，全部共用一个 --max-rounds 和一份 --also；
+已经实现过（有 STATUS）的规格跳过；结束时发一封汇总邮件。批量只用于
+完整运行，不能和 --start/--check/--finish 一起用。
+
 /refine-plan 命令自己调用的分步模式：
   --start <里程碑目录>          保存评审前的原文，建立记录目录（可带 --also、--max-rounds）
   --check <记录目录>            每轮评审前：记录文档版本，并检查「## 验收命令」能否被里程碑脚本解析
@@ -97,7 +116,7 @@ const USAGE = `用法：refine-plan <规格目录> [选项]
 
 export function parseArgs(argv) {
   const options = { spec: null, maxRounds: 5, also: [], dryRun: false, help: false, start: false, check: null, finish: null,
-    agentTimeoutHours: 6, stallMinutes: 10, stallCpuSeconds: 10, notifyConfig: DEFAULT_CONFIG_FILE }
+    only: null, from: null, to: null, agentTimeoutHours: 6, stallMinutes: 10, stallCpuSeconds: 10, notifyConfig: DEFAULT_CONFIG_FILE }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     const value = () => {
@@ -107,6 +126,9 @@ export function parseArgs(argv) {
     }
     if (arg === '--max-rounds') options.maxRounds = Number(value())
     else if (arg === '--also') options.also.push(...value().split(',').map(item => item.trim()).filter(Boolean))
+    else if (arg === '--only') options.only = value()
+    else if (arg === '--from') options.from = value()
+    else if (arg === '--to') options.to = value()
     else if (arg === '--agent-timeout-hours') options.agentTimeoutHours = Number(value())
     else if (arg === '--stall-minutes') options.stallMinutes = Number(value())
     else if (arg === '--stall-cpu-seconds') options.stallCpuSeconds = Number(value())
@@ -124,12 +146,22 @@ export function parseArgs(argv) {
   if ([options.start, options.check !== null, options.finish !== null, options.dryRun].filter(Boolean).length > 1) {
     throw new Error('--start、--check、--finish、--dry-run 只能用一个')
   }
+  const batch = options.only !== null || options.from !== null || options.to !== null
+  if (batch && (options.start || options.check !== null || options.finish !== null)) {
+    throw new Error('批量选择（--only/--from/--to）只能用于完整运行，不能和 --start/--check/--finish 一起用')
+  }
   if (options.finish !== null || options.check !== null) {
     if (options.spec !== null) throw new Error('--check 和 --finish 只需要记录目录，不要再给里程碑目录')
     return options
   }
-  if (options.spec === null) throw new Error('缺少里程碑目录，例如 specs/35-foo')
+  if (batch && options.spec !== null) throw new Error('给了 --only/--from/--to 就不要再给里程碑目录')
+  if (!batch && options.spec === null) throw new Error('缺少里程碑目录，例如 specs/35-foo')
   if (!Number.isInteger(options.maxRounds) || options.maxRounds < 1) throw new Error('--max-rounds 需要正整数')
+  for (const key of ['from', 'to']) {
+    if (options[key] !== null && !MILESTONE_NUMBER.test(options[key])) throw new Error(`--${key} 需要两位或以上的数字，例如 03`)
+  }
+  if (options.only !== null) parseNumberSpec(options.only)
+  if (options.from !== null && options.to !== null && Number(options.from) > Number(options.to)) throw new Error('--from 不能大于 --to')
   for (const key of ['agentTimeoutHours', 'stallMinutes', 'stallCpuSeconds']) {
     if (!Number.isFinite(options[key]) || options[key] <= 0) throw new Error(`--${key} 需要正数`)
   }
@@ -176,6 +208,23 @@ export function locate(path, cwd = process.cwd()) {
 // How to name a spec of `repo` from this repository: "specs/35-foo" here, "../OPOC/specs/x" elsewhere.
 export function displaySpec(repo, spec) {
   return repo === realpathSync(root) ? spec : relative(realpathSync(root), join(repo, spec)).split(sep).join('/')
+}
+
+// The numbered specs this repository's specs/ holds for --only/--from/--to, in
+// number order, selected the way run-milestones.mjs selects milestones. A spec
+// that is already implemented (its STATUS exists) is skipped; one that has no
+// plan.md is an error, so a mistyped --only is not silently ignored.
+export function refinableSpecs(options, directory = join(root, 'specs')) {
+  const specs = []
+  const skipped = []
+  // A repository without specs/ simply has nothing to select.
+  if (!existsSync(directory)) return { specs, skipped }
+  for (const item of selectMilestones(listMilestones(directory), options)) {
+    if (!existsSync(join(directory, item.name, 'plan.md'))) throw new Error(`找不到 ${item.rel}/plan.md`)
+    if (existsSync(join(directory, item.name, 'STATUS'))) skipped.push(item.rel)
+    else specs.push(item)
+  }
+  return { specs, skipped }
 }
 
 // The verdict is the first non-empty line, as the reviewer is told to write it;
@@ -540,37 +589,140 @@ function modelOf(agentFile) {
   return existsSync(agentFile) ? splitFrontmatter(readFileSync(agentFile, 'utf8')).fields.model ?? null : null
 }
 
-// The plan, its repository, documents and models, checked; shared by the full run and --start.
+// The plan, its repository, documents and models, checked; shared by the full
+// run, the batch and --start. Throws, so a batch can record one bad spec and go
+// on; the callers turn it into a failure.
 function prepare(options) {
-  let located
-  try { located = locate(options.spec) } catch (error) { fail(error.message) }
-  const { repo, spec, placeholder } = located
+  const { repo, spec, placeholder } = locate(options.spec)
   const shown = displaySpec(repo, spec)
-  if (existsSync(join(repo, spec, 'STATUS'))) fail(`${shown}/STATUS 已存在：这个规格已经实现过，不再改它的 plan。`)
+  if (existsSync(join(repo, spec, 'STATUS'))) throw new Error(`${shown}/STATUS 已存在：这个规格已经实现过，不再改它的 plan。`)
   const also = options.also.map(path => {
     const rel = repoPath(path, repo)
     if (!rel || NOT_DOCUMENTS.has(basename(rel)) || !existsSync(join(repo, rel)) || !statSync(join(repo, rel)).isFile()) {
-      fail(`--also 的文件不存在、不在 plan 所在的仓库里，或者不能修改：${path}（路径相对 ${repo}）`)
+      throw new Error(`--also 的文件不存在、不在 plan 所在的仓库里，或者不能修改：${path}（路径相对 ${repo}）`)
     }
     if (!EDITABLE.some(dir => dir !== LOGS && rel.startsWith(`${dir}/`))) {
-      fail(`--also 只能是 ${EDITABLE.filter(dir => dir !== LOGS).join('/、')}/ 下的文档（plan-editor 只能写这些目录）：${path}`)
+      throw new Error(`--also 只能是 ${EDITABLE.filter(dir => dir !== LOGS).join('/、')}/ 下的文档（plan-editor 只能写这些目录）：${path}`)
     }
     return rel
   })
   const commandFile = join(repo, '.opencode', 'commands', `${COMMAND}.md`)
-  if (!existsSync(commandFile)) fail(`找不到 opencode 命令文件：${commandFile}`)
+  if (!existsSync(commandFile)) throw new Error(`找不到 opencode 命令文件：${commandFile}`)
   const command = splitFrontmatter(readFileSync(commandFile, 'utf8'))
   const editor = command.fields.agent
-  if (!editor) fail(`${commandFile} 的 frontmatter 没有写 agent。`)
+  if (!editor) throw new Error(`${commandFile} 的 frontmatter 没有写 agent。`)
   const models = {}
   for (const agent of [editor, REVIEWER, FALLBACK_REVIEWER]) {
     models[agent] = modelOf(join(repo, '.opencode', 'agents', `${agent}.md`))
-    if (!models[agent]) fail(`找不到 ${agent} 的模型：${join(repo, '.opencode', 'agents', `${agent}.md`)} 的 frontmatter 需要写 model。`)
+    if (!models[agent]) throw new Error(`找不到 ${agent} 的模型：${join(repo, '.opencode', 'agents', `${agent}.md`)} 的 frontmatter 需要写 model。`)
   }
   const planText = readFileSync(join(repo, spec, 'plan.md'), 'utf8')
   return {
     repo, spec, shown, placeholder, also, documents: documentsInScope(spec, also), editor, models, commandFile,
     title: milestoneTitle(planText, basename(spec)), check: acceptanceCheck(planText),
+  }
+}
+
+// The header of one run: the spec, the documents in scope, the models and the
+// acceptance check, as they are printed before the run and by --dry-run.
+function scopeLines(options, prepared) {
+  const { repo, shown, placeholder, documents, editor, models, title, check } = prepared
+  return [
+    `规格：${title}（${shown}${placeholder ? `，占位 ${placeholder}` : ''}）`,
+    ...(repo === realpathSync(root) ? [] : [`仓库：${repo}（用它自己的 .opencode）`]),
+    '范围内的文档：',
+    ...documents.map(document => `  ${document}`),
+    `opencode：/${COMMAND}，${editor}（${models[editor]}）调用 ${REVIEWER}（${models[REVIEWER]}；不可用时 ${FALLBACK_REVIEWER}，${models[FALLBACK_REVIEWER]}）`,
+    `最多 ${options.maxRounds} 轮评审`,
+    `验收命令：${check.text}`,
+    '',
+  ]
+}
+
+// One unattended run of one plan: opencode does the work in its own session,
+// this script guards it, writes the report and returns a summary for the mail.
+async function refineOnce(options, prepared) {
+  const { repo, spec, shown, documents, editor, models, commandFile, title } = prepared
+  process.stdout.write(`${scopeLines(options, prepared).join('\n')}\n`)
+  const opencode = process.env.OPENCODE_BIN || 'opencode'
+  // Whole seconds: meta.json's startedAt from --start must not sort before this.
+  const started = new Date(Math.floor(Date.now() / 1000) * 1000)
+  mkdirSync(join(repo, LOGS), { recursive: true })
+  const logFile = join(repo, LOGS, `${basename(spec)}-${started.toISOString().replace(/[:.]/gu, '-')}.runner.log`)
+  const inRepo = path => displaySpec(repo, repoPath(path, repo))
+  process.stdout.write(`运行日志：${inRepo(logFile)}\n\n`)
+
+  const args = [spec, String(options.maxRounds), ...prepared.also.flatMap(path => ['--also', path])].join(' ')
+  const prompt = expandCommand(readFileSync(commandFile, 'utf8'), args).prompt + unattendedNote()
+  const before = worktreeSnapshot(repo)
+  const agentArgs = ['run', '--standalone', '--agent', editor, '--model', models[editor], '--title', `refine ${basename(spec)}`]
+  const agent = await run(process.platform === 'win32' ? windowsShellCommand(opencode, agentArgs) : opencode, process.platform === 'win32' ? [] : agentArgs, {
+    logFile, cwd: repo, shell: process.platform === 'win32', input: prompt, watch: 'agent',
+    stall: { windowMs: options.stallMinutes * 60_000, minCpuSeconds: options.stallCpuSeconds },
+    timeoutMs: options.agentTimeoutHours * 3_600_000,
+  })
+
+  // What only this runner can see; the rest is the final check of --finish,
+  // which runs again here on the records whatever the agent did.
+  const runDirs = runDirsSince(spec, started, repo)
+  const problems = []
+  if (agent.timedOut) problems.push(`opencode 超过 ${options.agentTimeoutHours} 小时没有结束，已终止`)
+  else if (agent.code !== 0) problems.push(`opencode 以退出码 ${agent.code} 结束`)
+  const stray = strayChanges(before, worktreeSnapshot(repo), documents, spec)
+  if (stray.length > 0) problems.push(`改动了范围以外的文件：${stray.join('、')}`)
+  if (runDirs.length === 0) problems.push('没有执行 --start，找不到这次的记录目录')
+  if (runDirs.length > 1) problems.push(`执行了 ${runDirs.length} 次 --start，只看最新的记录目录`)
+  const meta = runDirs[0] ? readMeta(runDirs[0]) : null
+  if (meta && (meta.maxRounds !== options.maxRounds || meta.documents.join('\n') !== documents.join('\n'))) {
+    problems.push('--start 用的轮次上限或文档范围和这次运行的不一致')
+  }
+
+  let finished = null
+  if (runDirs[0] && readRounds(runDirs[0], repo).length > 0) {
+    try { finished = finishRun(runDirs[0], { cwd: repo, extraProblems: problems }) } catch (error) { problems.push(`生成报告失败：${error.message}`) }
+  } else if (runDirs[0]) {
+    problems.push('一轮评审记录也没有')
+  }
+  if (finished) problems.splice(0, problems.length, ...finished.problems)
+  const result = problems.length > 0 || !finished ? 'failed' : finished.approved ? 'approved' : 'unresolved'
+  return {
+    repo, spec, shown, title, result,
+    // finishRun's outcome already says when the final check failed.
+    outcome: finished ? finished.outcome : '运行没有正常完成，没有评审记录',
+    problems, reportFile: finished ? `${shown}/${REPORT_FILE}` : null, runDir: runDirs[0] ? inRepo(runDirs[0]) : null,
+    logFile: inRepo(logFile), durationMs: Date.now() - started, rounds: finished?.rounds ?? [], decisions: finished?.decisions ?? [],
+    diffCommand: repo === realpathSync(root) ? `git diff -- ${spec}` : `git -C ${relative(realpathSync(root), repo).split(sep).join('/')} diff -- ${spec}`,
+  }
+}
+
+// The one mail a batch sends: the count per outcome, the total time and one
+// line per spec, with the problems of the runs that failed.
+export function batchMail(results, tag) {
+  const icon = { approved: '✅', unresolved: '⚠️', failed: '❌' }
+  const counts = { approved: 0, unresolved: 0, failed: 0 }
+  for (const result of results) counts[result.result] += 1
+  const overall = counts.failed > 0 ? 'failed' : counts.unresolved > 0 ? 'unresolved' : 'approved'
+  const parts = []
+  if (counts.approved > 0) parts.push(`通过 ${counts.approved}`)
+  if (counts.unresolved > 0) parts.push(`未解决 ${counts.unresolved}`)
+  if (counts.failed > 0) parts.push(`失败 ${counts.failed}`)
+  const decisions = results.reduce((sum, result) => sum + (result.decisions?.length ?? 0), 0)
+  const totalMs = results.reduce((sum, result) => sum + (result.durationMs ?? 0), 0)
+  return {
+    subject: `${tag ? `${tag} ` : ''}${icon[overall]} plan 评审 ${results.length} 个：${parts.join('、')}`,
+    text: [
+      `批量评审 ${results.length} 个规格：${parts.join('、')}`,
+      `总用时：${formatDuration(totalMs)}`,
+      ...(decisions ? [`需要你决定的问题：${decisions} 个（见各自的 refine-report.md）`] : []),
+      '',
+      ...results.flatMap(result => [
+        `${icon[result.result]} ${result.shown}：${result.outcome}`,
+        ...(result.problems ?? []).map(problem => `    - ${problem}`),
+        ...(result.reportFile ? [`    改动说明：${result.reportFile}`] : []),
+      ]),
+      '',
+      '文档改动没有提交，复核后自行提交。',
+    ].join('\n'),
   }
 }
 
@@ -604,8 +756,37 @@ async function main() {
     process.exit(result.check.ok ? 0 : 1)
   }
 
-  const { repo, spec, shown, placeholder, also, documents, editor, models, commandFile, title, check } = prepare(options)
+  // The batch selects several numbered specs of this repository; a plain run is one target.
+  const batch = options.only !== null || options.from !== null || options.to !== null
+  const targets = []
+  if (batch) {
+    let picked
+    try { picked = refinableSpecs(options) } catch (error) { fail(error.message) }
+    if (picked.skipped.length > 0) process.stdout.write(`已实现，跳过：${picked.skipped.join('、')}\n`)
+    if (picked.specs.length === 0) fail('没有匹配的可评审规格（--only/--from/--to）。')
+    for (const item of picked.specs) targets.push({ label: item.rel, path: join(root, 'specs', item.name) })
+    process.stdout.write(`批量评审 ${targets.length} 个规格，逐个运行：\n${targets.map(target => `  ${target.label}`).join('\n')}\n\n`)
+  } else {
+    targets.push({ label: options.spec, path: options.spec })
+  }
+
+  // Resolve every target's plan up front: a bad spec fails its own run only.
+  const entries = targets.map(target => {
+    try { return { target, prepared: prepare({ ...options, spec: target.path }) } }
+    catch (error) { return { target, error: error.message } }
+  })
+  if (options.dryRun) {
+    let failed = 0
+    for (const entry of entries) {
+      if (entry.error) { failed += 1; process.stdout.write(`✗ ${entry.target.label}：${entry.error}\n\n`); continue }
+      process.stdout.write(`${scopeLines(options, entry.prepared).join('\n')}\n\n`)
+    }
+    process.exit(failed > 0 ? 1 : 0)
+  }
+  if (entries.every(entry => entry.error)) fail([...new Set(entries.map(entry => entry.error))].join('\n'))
+
   if (options.start) {
+    const { repo, spec, documents, title, models, check } = entries[0].prepared
     const runDir = startRun({ spec, documents, title, models, maxRounds: options.maxRounds, cwd: repo })
     process.stdout.write([
       `记录目录：${repoPath(runDir, repo)}`,
@@ -617,19 +798,6 @@ async function main() {
     ].join('\n'))
     return
   }
-
-  // A full unattended run: opencode does the work, this script guards it.
-  process.stdout.write([
-    `规格：${title}（${shown}${placeholder ? `，占位 ${placeholder}` : ''}）`,
-    ...(repo === realpathSync(root) ? [] : [`仓库：${repo}（用它自己的 .opencode）`]),
-    '范围内的文档：',
-    ...documents.map(document => `  ${document}`),
-    `opencode：/${COMMAND}，${editor}（${models[editor]}）调用 ${REVIEWER}（${models[REVIEWER]}；不可用时 ${FALLBACK_REVIEWER}，${models[FALLBACK_REVIEWER]}）`,
-    `最多 ${options.maxRounds} 轮评审`,
-    `验收命令：${check.text}`,
-    '',
-  ].join('\n'))
-  if (options.dryRun) return
 
   const opencode = process.env.OPENCODE_BIN || 'opencode'
   const version = spawnSync(process.platform === 'win32' ? windowsShellCommand(opencode, ['--version']) : opencode,
@@ -645,56 +813,28 @@ async function main() {
     process.stderr.write(`⚠ ${error.message}。本次不发邮件。\n`)
   }
 
-  // Whole seconds: meta.json's startedAt from --start must not sort before this.
-  const started = new Date(Math.floor(Date.now() / 1000) * 1000)
-  mkdirSync(join(repo, LOGS), { recursive: true })
-  const logFile = join(repo, LOGS, `${basename(spec)}-${started.toISOString().replace(/[:.]/gu, '-')}.runner.log`)
-  const inRepo = path => displaySpec(repo, repoPath(path, repo))
-  process.stdout.write(`运行日志：${inRepo(logFile)}\n\n`)
   installInterruptHandler(() => {
     process.stderr.write(`已全部结束。文档的改动保留在工作区；评审前的原文和各轮记录在 ${LOGS}/ 下这次的记录目录里。\n`)
   })
 
-  const args = [spec, String(options.maxRounds), ...also.flatMap(path => ['--also', path])].join(' ')
-  const prompt = expandCommand(readFileSync(commandFile, 'utf8'), args).prompt + unattendedNote()
-  const before = worktreeSnapshot(repo)
-  const agentArgs = ['run', '--standalone', '--agent', editor, '--model', models[editor], '--title', `refine ${basename(spec)}`]
-  const agent = await run(process.platform === 'win32' ? windowsShellCommand(opencode, agentArgs) : opencode, process.platform === 'win32' ? [] : agentArgs, {
-    logFile, cwd: repo, shell: process.platform === 'win32', input: prompt, watch: 'agent',
-    stall: { windowMs: options.stallMinutes * 60_000, minCpuSeconds: options.stallCpuSeconds },
-    timeoutMs: options.agentTimeoutHours * 3_600_000,
-  })
-
-  // What only this runner can see; the rest is the final check of --finish,
-  // which runs again here on the records whatever the agent did.
-  const runDirs = runDirsSince(spec, started, repo)
-  const problems = []
-  if (agent.timedOut) problems.push(`opencode 超过 ${options.agentTimeoutHours} 小时没有结束，已终止`)
-  else if (agent.code !== 0) problems.push(`opencode 以退出码 ${agent.code} 结束`)
-  const stray = strayChanges(before, worktreeSnapshot(repo), documents, spec)
-  if (stray.length > 0) problems.push(`改动了范围以外的文件：${stray.join('、')}`)
-  if (runDirs.length === 0) problems.push('没有执行 --start，找不到这次的记录目录')
-  if (runDirs.length > 1) problems.push(`执行了 ${runDirs.length} 次 --start，只看最新的记录目录`)
-  const meta = runDirs[0] ? readMeta(runDirs[0]) : null
-  if (meta && (meta.maxRounds !== options.maxRounds || meta.documents.join('\n') !== documents.join('\n'))) {
-    problems.push('--start 用的轮次上限或文档范围和这次运行的不一致')
+  const results = []
+  for (const entry of entries) {
+    if (entry.error) {
+      process.stdout.write(`✗ ${entry.target.label}：${entry.error}\n\n`)
+      results.push({ label: entry.target.label, shown: entry.target.label, title: entry.target.label, result: 'failed',
+        outcome: `准备失败：${entry.error}`, problems: [`准备失败：${entry.error}`], reportFile: null, runDir: null, logFile: null,
+        durationMs: 0, rounds: [], decisions: [], diffCommand: null })
+      continue
+    }
+    results.push(await refineOnce(options, entry.prepared))
   }
 
-  let finished = null
-  if (runDirs[0] && readRounds(runDirs[0], repo).length > 0) {
-    try { finished = finishRun(runDirs[0], { cwd: repo, extraProblems: problems }) } catch (error) { problems.push(`生成报告失败：${error.message}`) }
-  } else if (runDirs[0]) {
-    problems.push('一轮评审记录也没有')
-  }
-  if (finished) problems.splice(0, problems.length, ...finished.problems)
-  const result = problems.length > 0 || !finished ? 'failed' : finished.approved ? 'approved' : 'unresolved'
-  // finishRun's outcome already says when the final check failed.
-  const outcome = finished ? finished.outcome : '运行没有正常完成，没有评审记录'
-  const durationMs = Date.now() - started
-  const mail = mailFor({ title, spec: shown, result, outcome, problems, reportFile: finished ? `${shown}/${REPORT_FILE}` : null,
-    runDir: runDirs[0] ? inRepo(runDirs[0]) : null, logFile: inRepo(logFile), durationMs, rounds: finished?.rounds ?? [],
-    decisions: finished?.decisions ?? [], tag: `[${loadConfig(repo).name}]`,
-    diffCommand: repo === realpathSync(root) ? `git diff -- ${spec}` : `git -C ${relative(realpathSync(root), repo).split(sep).join('/')} diff -- ${spec}` })
+  const mail = batch
+    ? batchMail(results, `[${loadConfig(root).name}]`)
+    : mailFor({ title: results[0].title, spec: results[0].shown, result: results[0].result, outcome: results[0].outcome,
+      problems: results[0].problems, reportFile: results[0].reportFile, runDir: results[0].runDir, logFile: results[0].logFile,
+      durationMs: results[0].durationMs, rounds: results[0].rounds, decisions: results[0].decisions,
+      tag: `[${loadConfig(results[0].repo).name}]`, diffCommand: results[0].diffCommand })
   process.stdout.write(`\n${mail.subject}\n\n${mail.text}\n`)
   if (mailConfig) {
     try {
@@ -704,7 +844,9 @@ async function main() {
       process.stderr.write(`⚠ 邮件发送失败：${error.message}\n`)
     }
   }
-  process.exit({ approved: 0, unresolved: 3, failed: 1 }[result])
+  const failed = results.some(result => result.result === 'failed')
+  const unresolved = results.some(result => result.result === 'unresolved')
+  process.exit(failed ? 1 : unresolved ? 3 : 0)
 }
 
 if (isMain(import.meta.url)) {
