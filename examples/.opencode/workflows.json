@@ -5,7 +5,7 @@
   },
   "protectedDocs": ["docs/API-CONTRACT.md", "docs/requirements/**"],
   "machineNotes": [
-    "本机数据库偶尔卡住：测试大面积报 connect ETIMEDOUT 时重跑一次即可。"
+    "本机数据库偶尔卡住：测试大面积报 connect ETIMEDOUT 时重跑一次即可。如果重跑仍以同样方式失败，或测试耗时一轮比一轮长（零散的超时落在不相关的文件上），那就不是偶发卡住，要先查明变慢的原因，不能当成环境问题放行。"
   ],
   "pipelinesDir": "scripts/pipelines"
 }
