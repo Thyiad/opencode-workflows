@@ -149,6 +149,26 @@ Do NOT request changes merely because:
 If the implementation is correct, complete, maintainable,
 and satisfies plan.md, approve it.
 
+# How far to chase failures
+
+Block on bugs that normal use or one realistic fault can trigger: a request
+fails, a process restarts, a write is retried, two requests race.
+
+A failure that needs two or more independent faults at once (for example a
+crash between commit and reply plus a failed compensating write) is not
+blocking unless plan.md names that case or it can expose secrets or bypass
+authorization. List it under non-blocking suggestions with its consequence,
+so the final human review can decide.
+
+If an issue exists because plan.md itself is contradictory, ambiguous or
+asks for something unsound, say so and label it `PLAN ISSUE`. Do not ask
+the implementer to work around it. A `PLAN ISSUE` may be blocking.
+
+In a re-review round, first check that the previous blocking issues are
+fixed. Raise a new blocking issue only if the fix introduced it, or if it is
+a bug that meets the bar above and was missed before. Do not escalate to
+ever rarer fault combinations from round to round.
+
 # Verdict
 
 Your response MUST begin with exactly one of:
