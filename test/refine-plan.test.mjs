@@ -535,6 +535,9 @@ test('end to end: the fallback reviewer is named in the report; --also reaches t
 test('end to end: --only reviews several plans one after another', unix, () => withFakeRepo(async dir => {
   mkdirSync(join(dir, 'specs/36-bar'))
   writeFileSync(join(dir, 'specs/36-bar/plan.md'), PLAN.replace('# M99：示例', '# M99：另一个'))
+  // Both plans must be tracked before the run to distinguish edits from new reports.
+  execFileSync('git', ['add', 'specs/36-bar/plan.md'], { cwd: dir })
+  execFileSync('git', ['commit', '-qm', 'add second plan'], { cwd: dir })
   const { code, output } = await runRefine(dir, ['--only', '35,36'])
   assert.equal(code, 0, output)
   assert.match(output, /批量评审 2 个规格/u)
