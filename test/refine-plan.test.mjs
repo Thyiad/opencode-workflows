@@ -557,6 +557,9 @@ test('end to end: a batch skips an already implemented spec', unix, () => withFa
   const { code, output } = await runRefine(dir, ['--only', '35,36'])
   assert.equal(code, 0, output)
   assert.match(output, /已实现，跳过：specs\/36-done/u)
+  // One spec is left: the mail is the plain single-run one, not a batch summary.
+  assert.match(output, /✅ plan 评审 M99：示例：第 2 轮评审通过/u)
+  assert.doesNotMatch(output, /批量评审/u)
   assert.ok(existsSync(join(dir, 'specs/35-foo/refine-report.md')))
   assert.ok(!existsSync(join(dir, 'specs/36-done/refine-report.md')))
 }))

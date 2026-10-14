@@ -106,8 +106,9 @@ const USAGE = `用法：refine-plan <规格目录> [选项]
 
 批量（--only/--from/--to）：按编号顺序逐个评审，每个规格一次独立的
 opencode 会话和一个记录目录，全部共用一个 --max-rounds 和一份 --also；
-已经实现过（有 STATUS）的规格跳过；结束时发一封汇总邮件。批量只用于
-完整运行，不能和 --start/--check/--finish 一起用。
+已经实现过（有 STATUS）的规格跳过；结束时发一封邮件——评审多个规格时
+是汇总邮件，只评审一个规格时和普通运行一样。批量只用于完整运行，
+不能和 --start/--check/--finish 一起用。
 
 /refine-plan 命令自己调用的分步模式：
   --start <里程碑目录>          保存评审前的原文，建立记录目录（可带 --also、--max-rounds）
@@ -765,7 +766,8 @@ async function main() {
     if (picked.skipped.length > 0) process.stdout.write(`已实现，跳过：${picked.skipped.join('、')}\n`)
     if (picked.specs.length === 0) fail('没有匹配的可评审规格（--only/--from/--to）。')
     for (const item of picked.specs) targets.push({ label: item.rel, path: join(root, 'specs', item.name) })
-    process.stdout.write(`批量评审 ${targets.length} 个规格，逐个运行：\n${targets.map(target => `  ${target.label}`).join('\n')}\n\n`)
+    // Only a real batch announces itself; one selected spec runs like a plain run.
+    if (targets.length > 1) process.stdout.write(`批量评审 ${targets.length} 个规格，逐个运行：\n${targets.map(target => `  ${target.label}`).join('\n')}\n\n`)
   } else {
     targets.push({ label: options.spec, path: options.spec })
   }
@@ -829,7 +831,9 @@ async function main() {
     results.push(await refineOnce(options, entry.prepared))
   }
 
-  const mail = batch
+  // One reviewed spec gets the plain single-run mail, however it was selected;
+  // only a real batch sends the summary.
+  const mail = results.length > 1
     ? batchMail(results, `[${loadConfig(root).name}]`)
     : mailFor({ title: results[0].title, spec: results[0].shown, result: results[0].result, outcome: results[0].outcome,
       problems: results[0].problems, reportFile: results[0].reportFile, runDir: results[0].runDir, logFile: results[0].logFile,
