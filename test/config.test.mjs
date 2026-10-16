@@ -30,18 +30,25 @@ test('settings: defaults without a file, values and validation with one', () => 
   try {
     const defaults = loadConfig(repo)
     assert.equal(defaults.name, repo.split('/').at(-1))
+    assert.equal(defaults.commitScope, null)
     assert.deepEqual([defaults.requiredEnv, defaults.protectedDocs, defaults.machineNotes], [{}, [], []])
     assert.equal(defaults.pipelinesDir, join(repo, 'scripts', 'pipelines'))
 
     mkdirSync(join(repo, '.opencode'))
     writeFileSync(join(repo, '.opencode/workflows.json'), JSON.stringify({
-      name: 'HARNESS', requiredEnv: { DB_URL: '测试库' }, protectedDocs: ['docs/API.md'], machineNotes: ['慢'], pipelinesDir: 'ops/pipelines',
+      name: 'HARNESS', commitScope: 'asset', requiredEnv: { DB_URL: '测试库' }, protectedDocs: ['docs/API.md'], machineNotes: ['慢'], pipelinesDir: 'ops/pipelines',
     }))
     const config = loadConfig(repo)
     assert.equal(config.name, 'HARNESS')
+    assert.equal(config.commitScope, 'asset')
     assert.equal(config.pipelinesDir, join(repo, 'ops/pipelines'))
     assert.deepEqual(missingEnv(config, {}), ['DB_URL（测试库）'])
     assert.deepEqual(missingEnv(config, { DB_URL: 'x' }), [])
+
+    for (const commitScope of ['', 'M05', 'asset\nfix', 'asset): broken', null, 5]) {
+      writeFileSync(join(repo, '.opencode/workflows.json'), JSON.stringify({ commitScope }))
+      assert.throws(() => loadConfig(repo), /commitScope 必须是/u)
+    }
 
     writeFileSync(join(repo, '.opencode/workflows.json'), JSON.stringify({ requiredEnv: ['DB_URL'], machineNotes: 'x' }))
     assert.throws(() => loadConfig(repo), /requiredEnv 必须是 \{ 变量名: 说明 \}；machineNotes 必须是字符串数组/u)

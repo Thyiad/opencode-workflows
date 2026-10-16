@@ -51,6 +51,7 @@ refine-plan --help
    | 字段 | 含义 | 默认 |
    |---|---|---|
    | `name` | 邮件标题里的标签、发件人名称 | 仓库目录名 |
+   | `commitScope` | 里程碑提交使用的 scope，例如 `asset`，生成 `feat(asset): …`；跨仓库提交使用目标仓库自己的配置 | 本仓库用 `MNN`，跨仓库不带 scope |
    | `requiredEnv` | 跑里程碑前必须设置的环境变量：`{ "变量名": "说明" }` | 无 |
    | `protectedDocs` | 无人值守的 Claude 修复和安全评审不许改的文档（另外总是保护 `specs/**/plan.md`、`specs/00-conventions.md`） | 无 |
    | `machineNotes` | 告诉无人值守的 Claude 的本机情况（已知的环境问题和处理办法） | 无 |
