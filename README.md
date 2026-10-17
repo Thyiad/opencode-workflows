@@ -4,9 +4,10 @@
 
 | 命令 | 做什么 |
 |---|---|
-| `refine-plan` | 让 opencode 的 `/refine-plan` 自动评审、修改一份 plan，守住改动范围和轮次，生成修改记录 `refine-report.md`，发邮件 |
+| `refine-plan` | 让 opencode 的 `/refine-plan` 自动评审、修改一份 plan，守住改动范围和轮次，生成修改记录 `refine-report.md`；需要你处理时先让 Claude Code 处理，再发邮件 |
 | `run-milestones` | 按编号逐个跑 `specs/NN-*/plan.md`：opencode 实现 → 独立审查 → 自己再跑一遍验收命令 → 提交 |
 | `run-milestones-auto` | 包一层 `run-milestones`：跑完发邮件，失败时先让 Claude Code 无人值守地分析修复 |
+| `refine-and-run` | 从初版 plan 到提交的代码：先用 `refine-plan` 评审选中的全部 plan 并提交，全部通过后再 `run-milestones-auto`；有 plan 需要你就不写代码 |
 | `run-gated-stages` | 按流水线文件分阶段跑 `run-milestones-auto`，阶段之间做安全评审和收尾检查 |
 | `opencode-workflows-mail` | 发一封测试邮件，确认邮件通知配好了 |
 
@@ -14,7 +15,7 @@
 
 ## 安装成全局命令
 
-需要 Node.js 22 或更高，以及 git、[opencode](https://opencode.ai) v2（2.0.18 或更高）。`run-milestones-auto` 和 `run-gated-stages` 失败修复与安全评审还需要 Claude Code（2.1.259 或更高，已登录）。
+需要 Node.js 22 或更高，以及 git、[opencode](https://opencode.ai) v2（2.0.18 或更高）。`refine-plan`、`run-milestones-auto`、`refine-and-run` 的自动处理和 `run-gated-stages` 的安全评审还需要 Claude Code（2.1.259 或更高，已登录；没有时照常运行，只是不自动处理）。
 
 ```bash
 git clone git@gitee.com:Thyiad/opencode-workflows.git
@@ -22,7 +23,7 @@ cd opencode-workflows
 npm link
 ```
 
-`npm link` 把上面五个命令链接到 npm 的全局 bin 目录（就是 `npm prefix -g` 下的 `bin`），指向这个目录里的文件。确认装好了：
+`npm link` 把上面六个命令链接到 npm 的全局 bin 目录（就是 `npm prefix -g` 下的 `bin`），指向这个目录里的文件。确认装好了：
 
 ```bash
 refine-plan --help
@@ -79,6 +80,10 @@ refine-plan --only 35,36 --max-rounds 3      # 按编号批量：逐个评审多
 refine-plan --from 35 --to 37 --dry-run      # 批量看范围
 refine-plan ../OPOC/specs/01-foo             # 别的仓库里的 plan：在那个仓库里用它自己的 .opencode 跑
 
+refine-and-run specs/35-foo                  # 评审 M35 的 plan，通过就提交并实现
+refine-and-run --only 35,36                  # 先评审 M35、M36 的 plan，都通过后再实现
+refine-and-run --from 35 --to 37 --dry-run   # 看每个里程碑要做什么
+
 run-milestones --dry-run                     # 列出各里程碑的状态
 run-milestones-auto --only 35                # 实现 M35，失败时 Claude 修复，结束发邮件
 run-milestones-auto --from 35 --to 37
@@ -91,9 +96,25 @@ run-gated-stages --pipeline oauth --dry-run
 
 plan-editor（DeepSeek）调用只读的 plan-reviewer（GPT）评审 plan，按意见修改，循环到通过或达到轮次上限。涉及用户设计决定的问题不改，标成「需人工决定」。默认只改 `plan.md`，其他文档用 `--also` 指明（只能是 `specs/` 或 `docs/` 下的）。
 
-批量：`--only 35,36`（也支持 `35-37,40` 这样的范围）或 `--from 35 --to 37` 会按编号顺序**逐个**评审本仓库 `specs/` 下的规格，每个规格一次独立的 opencode 会话和一个记录目录，共用一个 `--max-rounds` 和一份 `--also`；已实现（有 `STATUS`）的规格跳过。结束时发一封邮件：评审多个规格时是汇总邮件，只评审一个时和普通运行一样（标题直接是那个 plan）。退出码按最坏的结果取（有失败 1，否则有未解决 3，全通过 0）。批量只用于完整运行，不能和 `--start/--check/--finish` 一起用。
+批量：`--only 35,36`（也支持 `35-37,40` 这样的范围）或 `--from 35 --to 37` 会按编号顺序**逐个**评审本仓库 `specs/` 下的规格，每个规格一次独立的 opencode 会话和一个记录目录，共用一个 `--max-rounds` 和一份 `--also`；已实现（有 `STATUS`）的规格跳过。结束时发一封邮件：评审多个规格时是汇总邮件，只评审一个时和普通运行一样（标题直接是那个 plan）。退出码按最坏的结果取（有失败 1，否则有未解决 3，否则有待决定 4，全通过 0）。批量只用于完整运行，不能和 `--start/--check/--finish` 一起用。
 
-收尾检查（无人值守和交互两种入口都做）：改动只限范围内的文档、每轮评审前都用 `--check` 记录了文档版本、通过的正是当前内容、轮次没有超限、验收命令能解析。结果写进规格目录的 `refine-report.md`；过程记录在 `.plan-refine-logs/`。不提交。退出码：0 通过，3 达到上限仍有问题，1 运行失败。
+收尾检查（无人值守和交互两种入口都做）：改动只限范围内的文档、每轮评审前都用 `--check` 记录了文档版本、通过的正是当前内容、轮次没有超限、验收命令能解析。结果写进规格目录的 `refine-report.md`；过程记录在 `.plan-refine-logs/`。不提交。
+
+需要你处理时——运行失败、达到轮次上限仍有阻塞问题，或评审通过但有「需人工决定」的问题——先交给 Claude Code（`claude -p`）处理一轮（`--fix-rounds`，默认 1；0 不处理）。Claude 只能改范围内的文档：能从代码、约定和需求文档里找到答案的阻塞问题它直接改，然后**重新评审一遍**（新的 opencode 会话，从第 1 轮开始，所以评审员也会复核 Claude 的修改）；真正要你决定的事它不替你决定，只把每个问题整理成选项和推荐写进邮件。改了范围以外的文件就停下，不再评审。还需要你时发邮件，并在终端里用 Remote Control 打开那个 Claude 会话：电脑上直接接手，或在手机 Claude App → Code 里接手；处理好后按邮件里「处理好后继续」的命令重跑。批量时每个规格各自处理，汇总邮件里列出每个要接管的会话，终端里打开第一个。`--accept-decisions` 让「需人工决定」的问题不再拦住通过（你做完决定、写进 plan 后重跑时用），`--no-handover` 不打开会话。Claude 处理过时，`refine-report.md` 末尾多一节「无人值守 Claude 的处理」，并列出之前各次运行的记录目录。
+
+退出码：0 通过，4 通过但有问题要你决定，3 达到上限仍有阻塞问题，1 运行失败。
+
+### refine-and-run
+
+写完初版 plan 后一条命令跑到底。和其他命令一样，跑一个（`refine-and-run specs/35-foo` 或 `--only 35`）或多个（`--only 35,36`、`--only 35-37,40`、`--from 35 --to 37`）：
+
+1. **先评审全部 plan**：选中的里程碑里还需要评审的，交给一次 `refine-plan --only …` 按编号逐个评审（全部通过时不发邮件）；
+2. 评审通过的 plan 逐个提交：`plan.md`、`--also` 的文档和 `refine-report.md`，提交信息 `docs(M35): 完善 plan：…`，跨仓库占位在目标仓库里提交。只提交评审时的版本：评审之后又改过（比如接管会话时）的不提交，下次重新评审；
+3. **全部 plan 就绪后才写代码**：用同样的选择跑一次 `run-milestones-auto`，实现、审查、验收、提交并推送。
+
+有 plan 需要你处理时，refine-plan 照常处理（Claude 先处理，再发邮件、打开会话），其余 plan 照常评审、提交，但**一行代码都不写**，终端里打印接着跑的命令。实现失败时同样由 run-milestones-auto 处理。重跑同一条命令就接着做：已实现的跳过；`refine-report.md` 已提交、结论是通过、评审时记下的文档版本和现在一致的（之后改过的，提交了也算改过），不再评审；`STATUS` 已存在的直接交给 `run-milestones-auto`。`--skip-refine` 不评审直接实现。
+
+开始前检查：本仓库或跨仓库的目标仓库在 master/main 上、又没带 `--allow-main` 时直接拒绝，不会先在那里提交 plan；选中的规格目录和 `--also` 的文档以外有未提交的改动时也拒绝（否则评审完才被 `run-milestones` 拒绝），确认属于本次里程碑时加 `--allow-dirty`。plan 提交只包含评审过的文件（评审删掉的文档也一并提交删除），暂存区里别的内容原样留着。有「需人工决定」问题的通过报告，即使你手动提交了，也不算就绪，除非当时或现在带了 `--accept-decisions`。开始写代码前会再检查一遍所有要实现的 plan：本轮的评审改了共用文档、让之前的通过失效时，不写代码，重跑会重新评审。全部已实现但还有没推送的提交时，交给 `run-milestones-auto` 补推送。参数怎么分给两个命令见 `refine-and-run --help`。
 
 ### run-milestones 与跨仓库占位
 

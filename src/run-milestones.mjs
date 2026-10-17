@@ -712,6 +712,12 @@ export const PROCESS_TABLE_FAILURE_LIMIT = 3
 
 const runningRoots = new Set()
 
+// Another long-running child (refine-plan's Claude rounds) that Ctrl+C must stop too.
+export function trackRoot(child) {
+  runningRoots.add(child.pid)
+  child.on('close', () => runningRoots.delete(child.pid))
+}
+
 // Resolves { code, timedOut, stalls }. `input`, when given, is written to the
 // command's stdin. `stall` is { windowMs, minCpuSeconds, pollMs?, readUnits? };
 // `readUnits(rootPid, watch)` replaces the process-table read in tests.

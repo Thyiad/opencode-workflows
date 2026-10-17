@@ -44,7 +44,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isMain, loadConfig, repoRootOf } from './config.mjs'
 import { DEFAULT_CONFIG_FILE, loadMailConfig, sendMail } from './notify-mail.mjs'
-import { claudeVersionSupported, resolveClaudeBin } from './run-milestones-auto.mjs'
+import { claudeVersionSupported, resolveClaudeBin } from './claude.mjs'
 import { acceptanceCommands, formatDuration, killTree, listMilestones, selectMilestones, targetOf } from './run-milestones.mjs'
 
 // The repository this run works on (the current directory's), and the wrapper
