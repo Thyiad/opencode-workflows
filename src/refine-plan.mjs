@@ -15,9 +15,19 @@
 //      and the rounds must stay within the limit
 //   4. regenerate <milestone>/refine-report.md from the records, so the
 //      rounds, the unresolved issues and the full diff are the runner's own
-//   5. send an email (notify-mail.mjs settings, when present)
+//   5. when the run needs the user (it failed, blocking issues are left at the
+//      round limit, or 需人工决定 items wait), start headless Claude Code on it
+//      (claude.mjs). Claude settles what it safely can in the documents in scope
+//      and answers `rerun` (the review runs again, from round 1, so the reviewer
+//      checks Claude's edits too) or `give-up` (it cannot: above all every real
+//      decision, which it analyses for the user instead). At most --fix-rounds
+//      rounds (default 1); a later round resumes the same session.
+//   6. send an email (notify-mail.mjs settings, when present); when the user is
+//      still needed, reopen that Claude session in this terminal with Remote
+//      Control, so the user can take over here or from the Claude app.
 //
 // Nothing is committed: review the diff and refine-report.md, then commit.
+// refine-and-run.mjs commits an approved plan and goes on to implement it.
 //
 //   refine-plan specs/35-foo                    # up to 5 review rounds
 //   refine-plan specs/35-foo --max-rounds 3
@@ -58,17 +68,20 @@
 //                         approval of the current documents) and write
 //                         <milestone>/refine-report.md from the records
 //
-// Exit code: 0 approved, 3 finished with blocking issues left, 1 anything else.
+// Exit code: 0 approved, 4 approved but 需人工决定 items wait for the user,
+// 3 finished with blocking issues left, 1 anything else. A batch exits with the
+// worst of its specs.
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { canHandover, checkClaude, handover, runClaude, sessionLines } from './claude.mjs'
 import { isMain, loadConfig, repoRootOf } from './config.mjs'
 import { DEFAULT_CONFIG_FILE, loadMailConfig, sendMail } from './notify-mail.mjs'
 import {
   MILESTONE_NUMBER, MIN_OPENCODE_VERSION, acceptanceCommands, crossRepoTarget, expandCommand, formatDuration, installInterruptHandler, listMilestones,
-  milestoneTitle, opencodeVersionSupported, parseNumberSpec, processTable, run, selectMilestones, splitFrontmatter, windowsShellCommand,
+  milestoneTitle, opencodeVersionSupported, parseNumberSpec, processTable, run, selectMilestones, splitFrontmatter, trackRoot, windowsShellCommand,
 } from './run-milestones.mjs'
 
 // The current directory's repository: paths are shown relative to it.
@@ -101,8 +114,21 @@ const USAGE = `用法：refine-plan <规格目录> [选项]
   --stall-minutes <n>           看门狗：多少分钟没有进展算卡住，默认 10
   --stall-cpu-seconds <n>       看门狗：这段时间内 CPU 增长低于多少秒算没有进展，默认 10
   --notify-config <文件>        邮件配置，默认 ~/.opencode-workflows/notify.env（不存在就不发邮件）
+  --fix-rounds <n>              评审需要处理时，最多几轮 Claude（默认 1；0 = 不交给 Claude，只发邮件）
+  --claude-timeout-minutes <n>  一轮 Claude 的时间上限，默认 60
+  --no-handover                 需要你处理时，不在终端里打开 Claude 会话
+  --accept-decisions            评审通过但有「需人工决定」的问题时也算通过，不停下来
+  --no-success-mail             全部通过时不发邮件（refine-and-run 用）
+  --continue-command <命令>     邮件和 Claude 告诉你处理好后运行的命令（默认重跑本命令）
+  --results-file <文件>         把每个规格的结果写成 JSON（refine-and-run 用）
   --dry-run                     只显示范围、模型和检查结果
   -h, --help                    显示本说明
+
+需要你处理时（运行失败、达到轮次上限仍有阻塞问题、或有「需人工决定」的问题）：
+先交给 Claude Code（claude -p）处理一轮——它只改范围内的文档，修好了就重新评审；
+真正要你决定的事它不替你决定，只整理出选项和推荐。还需要你时发邮件，并在终端里用
+Remote Control 打开那个 Claude 会话，电脑上直接接手，或在手机 Claude App → Code 里接手。
+退出码：0 通过，4 通过但有问题要你决定，3 达到上限仍有阻塞问题，1 运行失败。
 
 批量（--only/--from/--to）：按编号顺序逐个评审，每个规格一次独立的
 opencode 会话和一个记录目录，全部共用一个 --max-rounds 和一份 --also；
@@ -117,7 +143,8 @@ opencode 会话和一个记录目录，全部共用一个 --max-rounds 和一份
 
 export function parseArgs(argv) {
   const options = { spec: null, maxRounds: 5, also: [], dryRun: false, help: false, start: false, check: null, finish: null,
-    only: null, from: null, to: null, agentTimeoutHours: 6, stallMinutes: 10, stallCpuSeconds: 10, notifyConfig: DEFAULT_CONFIG_FILE }
+    only: null, from: null, to: null, agentTimeoutHours: 6, stallMinutes: 10, stallCpuSeconds: 10, notifyConfig: DEFAULT_CONFIG_FILE,
+    fixRounds: 1, claudeTimeoutMinutes: 60, handover: true, acceptDecisions: false, successMail: true, continueCommand: null, resultsFile: null }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     const value = () => {
@@ -134,6 +161,13 @@ export function parseArgs(argv) {
     else if (arg === '--stall-minutes') options.stallMinutes = Number(value())
     else if (arg === '--stall-cpu-seconds') options.stallCpuSeconds = Number(value())
     else if (arg === '--notify-config') options.notifyConfig = resolve(value())
+    else if (arg === '--fix-rounds') options.fixRounds = Number(value())
+    else if (arg === '--claude-timeout-minutes') options.claudeTimeoutMinutes = Number(value())
+    else if (arg === '--no-handover') options.handover = false
+    else if (arg === '--accept-decisions') options.acceptDecisions = true
+    else if (arg === '--no-success-mail') options.successMail = false
+    else if (arg === '--continue-command') options.continueCommand = value()
+    else if (arg === '--results-file') options.resultsFile = resolve(value())
     else if (arg === '--dry-run') options.dryRun = true
     else if (arg === '--start') options.start = true
     else if (arg === '--check') options.check = value()
@@ -163,7 +197,8 @@ export function parseArgs(argv) {
   }
   if (options.only !== null) parseNumberSpec(options.only)
   if (options.from !== null && options.to !== null && Number(options.from) > Number(options.to)) throw new Error('--from 不能大于 --to')
-  for (const key of ['agentTimeoutHours', 'stallMinutes', 'stallCpuSeconds']) {
+  if (!Number.isInteger(options.fixRounds) || options.fixRounds < 0) throw new Error('--fix-rounds 需要非负整数')
+  for (const key of ['agentTimeoutHours', 'stallMinutes', 'stallCpuSeconds', 'claudeTimeoutMinutes']) {
     if (!Number.isFinite(options[key]) || options[key] <= 0) throw new Error(`--${key} 需要正数`)
   }
   return options
@@ -318,8 +353,24 @@ export function diffStat(diff) {
   return stats
 }
 
+// An approved report records, in an HTML comment, what its review approved:
+// { documents: { path: hash }, decisions: <需人工决定 items>, accepted: <run
+// with --accept-decisions> }. refine-and-run reviews a plan again once the
+// documents are no longer that version (even when the change was committed),
+// and does not implement it while decisions wait and were not accepted.
+const REVIEWED_MARK = 'refine-plan reviewed:'
+
+export function reviewedRecord(reportText) {
+  const json = new RegExp(`<!-- ${REVIEWED_MARK} (\\{.*\\}) -->`, 'u').exec(String(reportText ?? ''))?.[1]
+  let record = null
+  try { record = json ? JSON.parse(json) : null } catch { return null }
+  const valid = record && typeof record.documents === 'object' && record.documents !== null
+    && Number.isInteger(record.decisions) && typeof record.accepted === 'boolean'
+  return valid ? record : null
+}
+
 export function renderReport({ title, date, reviewerModels, editorModel, runDir, outcome, rounds, body, unresolved, diff, durationMs,
-  problems = [], decisions = [] }) {
+  problems = [], decisions = [], reviewed = null }) {
   const stats = diffStat(diff)
   const lines = [
     `# ${title}：plan 自动评审与修改记录`,
@@ -327,6 +378,7 @@ export function renderReport({ title, date, reviewerModels, editorModel, runDir,
     `> 由 \`refine-plan\` 生成于 ${date}。这是修改记录，**不是需求**：实现以同目录的 plan.md 为准。`,
     `> 评审：${reviewerModels.map(model => `\`${model}\``).join('、')}；修改：\`${editorModel}\`。各轮原文在本地 \`${runDir}\`（不提交）。`,
     '',
+    ...(reviewed ? [`<!-- ${REVIEWED_MARK} ${JSON.stringify(reviewed)} -->`, ''] : []),
     '| 项目 | 结果 |',
     '|---|---|',
     `| 结论 | ${outcome} |`,
@@ -511,7 +563,7 @@ export function auditRun(runDir, { cwd = root, rounds = readRounds(runDir, cwd),
 // the rounds, the body the editor wrote to report-body.md, every 需人工决定
 // item, the unresolved issues and the full diff. `approved` needs both the
 // reviewer's APPROVED and a clean final check.
-export function finishRun(runDir, { cwd = root, now = new Date(), extraProblems = [] } = {}) {
+export function finishRun(runDir, { cwd = root, now = new Date(), extraProblems = [], acceptDecisions = false } = {}) {
   const meta = readMeta(runDir)
   const rounds = readRounds(runDir, cwd)
   if (rounds.length === 0) throw new Error(`${repoPath(runDir, cwd)} 里还没有任何一轮评审记录（round-1-review.md）`)
@@ -537,6 +589,8 @@ export function finishRun(runDir, { cwd = root, now = new Date(), extraProblems 
     editorModel: meta.models?.['plan-editor'] ?? 'plan-editor', runDir: repoPath(runDir, cwd), outcome, rounds, body, problems, decisions,
     unresolved: last.verdict !== 'CHANGES_REQUESTED' ? null : last.text.replace(/^.*\r?\n/u, ''),
     diff, durationMs: now - new Date(meta.startedAt),
+    // The audit has checked that nothing changed after the approving review.
+    reviewed: approved ? { documents: documentHashes(meta.documents, cwd), decisions: decisionCount(decisions), accepted: acceptDecisions } : null,
   })
   const reportFile = `${meta.spec}/${REPORT_FILE}`
   writeFileSync(join(cwd, reportFile), report)
@@ -560,10 +614,18 @@ export function unattendedNote() {
   ].join('\n')
 }
 
+// Distinct 需人工决定 issues (R<round>-<n>), else the number of items.
+export const decisionCount = items => new Set(items.flatMap(item => item.text.match(/R\d+-\d+/gu) ?? [])).size || items.length
+
+// 'decisions': approved, but 需人工决定 items wait for the user.
+export const ICONS = { approved: '✅', decisions: '❓', unresolved: '⚠️', failed: '❌' }
+
 export function mailFor({ title, spec, result, outcome, problems = [], reportFile = null, runDir = null, logFile, durationMs, rounds = [],
-  decisions: decisionItems = [], diffCommand = `git diff -- ${spec}`, tag = '' }) {
-  const icon = { approved: '✅', unresolved: '⚠️', failed: '❌' }[result]
-  const decisions = new Set(decisionItems.flatMap(item => item.text.match(/R\d+-\d+/gu) ?? [])).size || decisionItems.length
+  decisions: decisionItems = [], diffCommand = `git diff -- ${spec}`, tag = '', claudeRounds = [], session = null, handedOver = false,
+  stopReason = null, continueCommand = null, repo = null }) {
+  const decisions = decisionCount(decisionItems)
+  const userActions = claudeRounds.at(-1)?.decision?.userActions ?? []
+  const pending = result !== 'approved'
   const lines = [
     `里程碑：${title}（${spec}）`,
     `结果：${outcome}`,
@@ -572,13 +634,197 @@ export function mailFor({ title, spec, result, outcome, problems = [], reportFil
     `用时：${formatDuration(durationMs)}`,
     '',
     ...(problems.length ? ['运行检查发现的问题：', ...problems.map(problem => `- ${problem}`), ''] : []),
+  ]
+  if (pending && claudeRounds.length) {
+    const cause = claudeRounds.at(-1).decision?.rootCause
+    if (cause) lines.push(`根因：${cause}`)
+    lines.push('你需要做的：')
+    if (userActions.length) userActions.forEach((item, index) => lines.push(`  ${index + 1}. ${item}`))
+    else lines.push('  看报告和下面 Claude 的记录处理，再按「处理好后继续」的命令接着跑。')
+    lines.push('')
+  }
+  if (stopReason) lines.push(`说明：${stopReason}`, '')
+  if (claudeRounds.length) lines.push(pending ? 'Claude 已经做了：' : 'Claude 处理了什么：', ...claudeRoundLines(claudeRounds), '')
+  if (session) lines.push(...sessionLines({ session, handedOver, cwd: repo }), '')
+  if (pending && continueCommand) lines.push(`处理好后继续：${continueCommand}`, '')
+  lines.push(
     ...(reportFile ? [`改动说明：${reportFile}`, `查看改动：${diffCommand}`] : []),
     ...(runDir ? [`各轮记录：${runDir}`] : []),
-    `运行日志：${logFile}`,
+    ...(logFile ? [`运行日志：${logFile}`] : []),
     '',
     '文档改动没有提交，复核后自行提交。',
+  )
+  const fixed = !pending && claudeRounds.length ? '（Claude 处理后）' : ''
+  return { subject: `${tag ? `${tag} ` : ''}${ICONS[result]} plan 评审 ${title}：${outcome}${fixed}`, text: lines.join('\n') }
+}
+
+// ---- Claude -----------------------------------------------------------------
+
+// What Claude may answer after a run that needs the user.
+export const FIX_DECISIONS = ['rerun', 'give-up']
+const nextLabel = { rerun: 'rerun（重新评审）', 'give-up': 'give-up（交给你）' }
+
+// Why a finished run cannot go on without someone: null when it is done.
+export function pendingKind(result, acceptDecisions = false) {
+  if (result.result !== 'approved') return result.result
+  return !acceptDecisions && result.decisions.length > 0 ? 'decisions' : null
+}
+
+const KIND_TEXT = {
+  failed: 'The run failed: the final check found problems, or opencode did not finish. Its result cannot be trusted.',
+  unresolved: 'The round limit was reached with blocking issues left: see "仍未解决的阻塞问题" in the report and the last `round-<n>-review.md`.',
+  decisions: 'The reviewer approved, but items are marked 需人工决定: see "需人工决定的问题" in the report. They do not block the review, but the plan is not ready to implement until they are settled.',
+}
+
+const fence = text => ['```', String(text).trimEnd() || '(empty)', '```'].join('\n')
+
+function runSection(context) {
+  const { kind, outcome, problems, reportFile, runDir, logFile } = context
+  return [
+    `- How it ended: ${KIND_TEXT[kind]}`,
+    `- refine-plan's verdict: \`${outcome}\``,
+    ...(problems.length ? ['- Problems found by the final check:', '', fence(problems.map(problem => `- ${problem}`).join('\n')), ''] : []),
+    reportFile
+      ? `- Report: \`${reportFile}\` (the rounds, every 需人工决定 item, the unresolved blocking issues, the full diff since the run started)`
+      : '- No report was written: the run did not get as far as a review.',
+    runDir
+      ? `- Records of this run: \`${runDir}\` (\`round-<n>-review.md\`, \`round-<n>-response.md\`, \`baseline/\` = the documents before this run)`
+      : '- No record directory: `--start` never ran.',
+    `- opencode's output for this run: \`${logFile}\`. Read it with \`tail -n 300\` and \`grep -n\`, never whole.`,
   ]
-  return { subject: `${tag ? `${tag} ` : ''}${icon} plan 评审 ${title}：${outcome}`, text: lines.join('\n') }
+}
+
+// The prompt of the first round. Later rounds resume the same session and get
+// followUpPrompt() instead.
+export function fixPrompt(context) {
+  const { title, spec, repo, documents, round, maxRounds, continueCommand, machineNotes = [] } = context
+  return [
+    `# Unattended plan review follow-up: ${title}`,
+    '',
+    'You were started headless by `refine-plan` because the unattended review of a milestone plan did not end cleanly. Nobody is watching this session and nobody will answer questions. Investigate, fix what you safely can, then give your structured answer. The wrapper acts on `next` and emails your text fields to the user: write `rootCause`, `summary`, `actionsTaken` and `userActions` in Simplified Chinese, `rootCause` as one line.',
+    '',
+    '## What happened',
+    '',
+    `- Plan: \`${spec}/plan.md\` in \`${repo}\``,
+    `- Documents in scope, the only files anyone may change: ${documents.map(document => `\`${document}\``).join(', ')}`,
+    ...runSection(context),
+    '',
+    '## How the review works',
+    '',
+    '`refine-plan` runs the opencode command `/refine-plan` (`.opencode/commands/refine-plan.md`): the plan-editor agent has the read-only plan-reviewer review the plan, revises it and repeats until the reviewer approves or the round limit is reached. The reviewer marks real user decisions `[需人工决定]`: the editor does not change them, and they do not block an approval. `.opencode/agents/plan-reviewer.md` holds the review standard; read it and `specs/00-conventions.md` first.',
+    '',
+    '## Choose `next`',
+    '',
+    '- `rerun`: the wrapper runs `refine-plan` again on the current documents: a fresh opencode session that reviews them from round 1, so the reviewer checks your edits too. Choose it when',
+    '  - blocking issues were left at the round limit and you fixed them in the documents in scope, from facts in the code, the conventions and the documents the plan relies on;',
+    '  - the run failed for a transient or environmental reason (opencode crashed or timed out, a model was unavailable, the watchdog stopped a stall), or the editor broke a rule of the records (a missing `--check`, a review without a verdict, an edit after the last review), and nothing outside the documents in scope was changed;',
+    '  - a 需人工决定 item is settled explicitly by a document the plan relies on (a requirement under `docs/requirements/`, `specs/00-conventions.md`, a decision the plan itself records), and you aligned the plan with it, citing the source in `actionsTaken`.',
+    '- `give-up`: everything else, above all every real decision: what to build, trade-offs, product behavior, anything the plan records as the user\'s own decision. Never make such a decision yourself and never change a decision the plan records. Give up too when files outside the documents in scope were changed (name them, do not revert them) or when the same failure comes back. In `userActions` write one item per decision: the question, the options with their consequences, and your recommendation with the reason, so the user can answer from the email alone.',
+    '',
+    `This is round ${round} of at most ${maxRounds}. After \`give-up\` or the last round the user takes over this very session, from this computer or the Claude app. Then help them decide, write each decision into the documents in scope where it belongs (so later reviews and the implementer see it), and finally tell them to run \`${continueCommand}\`: it reviews the plan again. Once they have settled every 需人工决定 item, tell them to add \`--accept-decisions\`, or the reviewer may flag the same decisions again and stop the run.`,
+    '',
+    '## Rules',
+    '',
+    '- Change only the documents in scope. Never `docs/requirements/**`, never the review records under `.plan-refine-logs/` (they are the evidence), never code. The wrapper compares the working tree before and after your round and stops if anything else changed.',
+    '- Never `git commit`, `push`, `reset`, `checkout`/`restore`, `stash` or `clean`, and never discard uncommitted changes.',
+    '- Do not run opencode, `refine-plan` or `run-milestones`: the wrapper re-runs the review.',
+    '- Do not weaken the plan to get it approved: do not drop acceptance commands, requirements or scope the reviewer asked for, and do not blur a gap with vague wording.',
+    '- Keep the `## 验收命令` section parseable: one ```bash block, one complete command per line.',
+    '- Read big logs with grep/tail, not whole. Never copy secrets into files or into your answer.',
+    '',
+    ...(machineNotes.length > 0 ? ['## Known facts about this machine', '', ...machineNotes.map(note => `- ${note}`), ''] : []),
+  ].join('\n')
+}
+
+export function followUpPrompt(context) {
+  const { round, maxRounds, rerunCommand } = context
+  return [
+    `# Round ${round} of ${maxRounds}: the re-run did not end cleanly either`,
+    '',
+    `You answered \`next: rerun\`. The wrapper then ran \`${rerunCommand}\`, a fresh review from round 1, and it did not end cleanly:`,
+    '',
+    ...runSection(context),
+    '',
+    'Same job, rules, machine facts and answer format as before. If this is the same problem and you cannot settle it for good, choose `give-up` and tell the user exactly what to do.',
+    '',
+  ].join('\n')
+}
+
+export function claudeRoundLines(rounds) {
+  const lines = []
+  for (const round of rounds) {
+    lines.push(`  第 ${round.number} 轮 · ${round.decision ? nextLabel[round.decision.next] : '没有结论'} · ${formatDuration(round.durationMs)}`)
+    if (round.error) lines.push(`    错误：${round.error}`)
+    if (round.decision) {
+      lines.push(`    根因：${round.decision.rootCause}`, `    经过：${round.decision.summary}`)
+      if (round.decision.actionsTaken.length) lines.push('    做了：', ...round.decision.actionsTaken.map(item => `      - ${item}`))
+    }
+    if (round.logFile) lines.push(`    日志：${round.logFile}`)
+  }
+  return lines
+}
+
+// Appended to the final refine-report.md: the report covers the last run only,
+// whose baseline already holds Claude's edits.
+export function claudeReportSection(rounds, earlierRuns) {
+  return [
+    '## 无人值守 Claude 的处理',
+    '',
+    `评审没有顺利结束，Claude Code 处理了 ${rounds.length} 轮。上面的各轮评审和 diff 只是最后一次运行的；之前的运行记录：${earlierRuns.length ? earlierRuns.map(dir => `\`${dir}\``).join('、') : '无'}（第一次运行的 \`baseline/\` 是评审前的原文）。`,
+    '',
+    '```text',
+    ...claudeRoundLines(rounds).map(line => line.slice(2)),
+    '```',
+    '',
+  ].join('\n')
+}
+
+// One spec: run the review, and while it needs the user let Claude settle what
+// it can and run the review again. Side effects go through `deps`, so the tests
+// drive this with fakes:
+//   refineOnce()            one unattended run, the result refineOnce() below returns
+//   context(result)         the prompt facts of that result
+//   runClaude({ prompt, sessionId, resume, name })   one headless round
+//   snapshot(), stray(before, after)   files Claude changed outside the documents in scope
+//   claudeProblem, label, uuid(), now(), log(text)
+export async function refineSpec(options, deps) {
+  let result = await deps.refineOnce()
+  const claudeRounds = []
+  const earlierRuns = []
+  let session = null
+  let stopReason = null
+  for (let kind = pendingKind(result, options.acceptDecisions); kind; kind = pendingKind(result, options.acceptDecisions)) {
+    if (claudeRounds.length >= options.fixRounds) {
+      if (options.fixRounds > 0) stopReason = `Claude 处理 ${claudeRounds.length} 轮后仍然需要你处理。`
+      break
+    }
+    if (deps.claudeProblem) { stopReason = `没有让 Claude 处理：${deps.claudeProblem}`; break }
+    session ??= { id: deps.uuid(), title: `${deps.label} plan 待处理`, started: false }
+    const context = { ...deps.context(result), kind, round: claudeRounds.length + 1, maxRounds: options.fixRounds }
+    const before = deps.snapshot()
+    const startedAt = deps.now()
+    deps.log(`\n→ 评审需要处理（${kind}），交给 Claude（第 ${context.round}/${options.fixRounds} 轮，会话 ${session.id}）……\n`)
+    const answer = await deps.runClaude({
+      prompt: session.started ? followUpPrompt(context) : fixPrompt(context),
+      sessionId: session.id, resume: session.started, name: `${deps.label} plan 自动处理`,
+    })
+    session.started ||= Boolean(answer.started)
+    if (answer.sessionId) session.id = answer.sessionId
+    claudeRounds.push({ number: context.round, kind, durationMs: deps.now() - startedAt, decision: answer.decision ?? null, error: answer.error ?? null, logFile: answer.logFile ?? null })
+    if (answer.error) { stopReason = `Claude 没有给出可用的结论：${answer.error}`; break }
+    const stray = deps.stray(before, deps.snapshot())
+    if (stray.length) { stopReason = `Claude 改动了范围以外的文件：${stray.join('、')}，没有重新评审。`; break }
+    if (answer.decision.next === 'give-up') break
+    if (result.runDir) earlierRuns.push(result.runDir)
+    deps.log('\n→ Claude 结论：rerun，重新评审……\n')
+    result = await deps.refineOnce()
+  }
+  const kind = pendingKind(result, options.acceptDecisions)
+  return {
+    ...result, result: kind ?? 'approved',
+    outcome: kind === 'decisions' ? `${result.outcome}，${decisionCount(result.decisions)} 个问题需要你决定` : result.outcome,
+    claudeRounds, earlierRuns, stopReason, session: session?.started ? session : null,
+  }
 }
 
 function fail(message) {
@@ -680,7 +926,7 @@ async function refineOnce(options, prepared) {
 
   let finished = null
   if (runDirs[0] && readRounds(runDirs[0], repo).length > 0) {
-    try { finished = finishRun(runDirs[0], { cwd: repo, extraProblems: problems }) } catch (error) { problems.push(`生成报告失败：${error.message}`) }
+    try { finished = finishRun(runDirs[0], { cwd: repo, extraProblems: problems, acceptDecisions: options.acceptDecisions }) } catch (error) { problems.push(`生成报告失败：${error.message}`) }
   } else if (runDirs[0]) {
     problems.push('一轮评审记录也没有')
   }
@@ -692,19 +938,28 @@ async function refineOnce(options, prepared) {
     outcome: finished ? finished.outcome : '运行没有正常完成，没有评审记录',
     problems, reportFile: finished ? `${shown}/${REPORT_FILE}` : null, runDir: runDirs[0] ? inRepo(runDirs[0]) : null,
     logFile: inRepo(logFile), durationMs: Date.now() - started, rounds: finished?.rounds ?? [], decisions: finished?.decisions ?? [],
+    // For Claude, who works in the plan's repository.
+    paths: { logFile, runDir: runDirs[0] ?? null, reportFile: finished ? join(repo, spec, REPORT_FILE) : null },
     diffCommand: repo === realpathSync(root) ? `git diff -- ${spec}` : `git -C ${relative(realpathSync(root), repo).split(sep).join('/')} diff -- ${spec}`,
   }
 }
 
 // The one mail a batch sends: the count per outcome, the total time and one
 // line per spec, with the problems of the runs that failed.
+// Worst first: a failure, then an unresolved review, then pending decisions.
+export const worstResult = results => ['failed', 'unresolved', 'decisions'].find(kind => results.some(result => result.result === kind)) ?? 'approved'
+
+// The exit code of a run: 0 approved, 4 decisions pending, 3 unresolved, 1 failed.
+export const EXIT_CODES = { approved: 0, decisions: 4, unresolved: 3, failed: 1 }
+
 export function batchMail(results, tag) {
-  const icon = { approved: '✅', unresolved: '⚠️', failed: '❌' }
-  const counts = { approved: 0, unresolved: 0, failed: 0 }
+  const icon = ICONS
+  const counts = { approved: 0, decisions: 0, unresolved: 0, failed: 0 }
   for (const result of results) counts[result.result] += 1
-  const overall = counts.failed > 0 ? 'failed' : counts.unresolved > 0 ? 'unresolved' : 'approved'
+  const overall = worstResult(results)
   const parts = []
   if (counts.approved > 0) parts.push(`通过 ${counts.approved}`)
+  if (counts.decisions > 0) parts.push(`待决定 ${counts.decisions}`)
   if (counts.unresolved > 0) parts.push(`未解决 ${counts.unresolved}`)
   if (counts.failed > 0) parts.push(`失败 ${counts.failed}`)
   const decisions = results.reduce((sum, result) => sum + (result.decisions?.length ?? 0), 0)
@@ -720,6 +975,10 @@ export function batchMail(results, tag) {
         `${icon[result.result]} ${result.shown}：${result.outcome}`,
         ...(result.problems ?? []).map(problem => `    - ${problem}`),
         ...(result.reportFile ? [`    改动说明：${result.reportFile}`] : []),
+        ...(result.claudeRounds?.length ? [`    Claude 处理 ${result.claudeRounds.length} 轮：${result.claudeRounds.at(-1).decision?.rootCause ?? result.claudeRounds.at(-1).error}`] : []),
+        ...(result.result !== 'approved' && result.claudeRounds?.at(-1)?.decision?.userActions.length
+          ? result.claudeRounds.at(-1).decision.userActions.map(item => `    → ${item}`) : []),
+        ...(result.session ? [`    接管：claude --resume ${result.session.id} --remote-control "${result.session.title}"（在 ${result.repo}）`] : []),
       ]),
       '',
       '文档改动没有提交，复核后自行提交。',
@@ -819,28 +1078,46 @@ async function main() {
     process.stderr.write(`已全部结束。文档的改动保留在工作区；评审前的原文和各轮记录在 ${LOGS}/ 下这次的记录目录里。\n`)
   })
 
+  // Claude settles what it can when a review needs the user; checked once, up front.
+  const claudeProblem = options.fixRounds > 0 ? checkClaude() : null
+  if (claudeProblem) process.stderr.write(`⚠ ${claudeProblem}。评审需要处理时无法交给 Claude。\n`)
+
   const results = []
   for (const entry of entries) {
     if (entry.error) {
       process.stdout.write(`✗ ${entry.target.label}：${entry.error}\n\n`)
       results.push({ label: entry.target.label, shown: entry.target.label, title: entry.target.label, result: 'failed',
         outcome: `准备失败：${entry.error}`, problems: [`准备失败：${entry.error}`], reportFile: null, runDir: null, logFile: null,
-        durationMs: 0, rounds: [], decisions: [], diffCommand: null })
+        durationMs: 0, rounds: [], decisions: [], diffCommand: null, claudeRounds: [], session: null })
       continue
     }
-    results.push(await refineOnce(options, entry.prepared))
+    const result = await refineSpec(options, specDeps(options, entry.prepared, claudeProblem))
+    if (result.claudeRounds.length && result.paths?.reportFile && existsSync(result.paths.reportFile)) {
+      appendFileSync(result.paths.reportFile, `\n${claudeReportSection(result.claudeRounds, result.earlierRuns)}`)
+    }
+    // Now, before the next spec's review can change a shared --also document.
+    const hashes = documentHashes([...entry.prepared.documents, `${result.spec}/${REPORT_FILE}`], result.repo)
+    results.push({ ...result, label: entry.target.label, hashes, continueCommand: options.continueCommand ?? refineCommand(options, result.shown) })
   }
+  if (options.resultsFile) writeFileSync(options.resultsFile, `${JSON.stringify(resultsRecord(results), null, 2)}\n`)
 
+  // The first session that waits for the user is reopened here, after the mail.
+  const takeover = options.handover && canHandover() ? results.find(result => result.result !== 'approved' && result.session) ?? null : null
   // One reviewed spec gets the plain single-run mail, however it was selected;
   // only a real batch sends the summary.
+  const single = results[0]
   const mail = results.length > 1
     ? batchMail(results, `[${loadConfig(root).name}]`)
-    : mailFor({ title: results[0].title, spec: results[0].shown, result: results[0].result, outcome: results[0].outcome,
-      problems: results[0].problems, reportFile: results[0].reportFile, runDir: results[0].runDir, logFile: results[0].logFile,
-      durationMs: results[0].durationMs, rounds: results[0].rounds, decisions: results[0].decisions,
-      tag: `[${loadConfig(results[0].repo).name}]`, diffCommand: results[0].diffCommand })
+    : mailFor({ title: single.title, spec: single.shown, result: single.result, outcome: single.outcome,
+      problems: single.problems, reportFile: single.reportFile, runDir: single.runDir, logFile: single.logFile,
+      durationMs: single.durationMs, rounds: single.rounds, decisions: single.decisions,
+      tag: `[${loadConfig(single.repo ?? root).name}]`, diffCommand: single.diffCommand, claudeRounds: single.claudeRounds,
+      session: single.result === 'approved' ? null : single.session, handedOver: takeover === single, stopReason: single.stopReason,
+      continueCommand: single.continueCommand, repo: single.repo })
   process.stdout.write(`\n${mail.subject}\n\n${mail.text}\n`)
-  if (mailConfig) {
+  const overall = worstResult(results)
+  if (overall === 'approved' && !options.successMail) process.stdout.write('（全部通过，按 --no-success-mail 不发邮件。）\n')
+  else if (mailConfig) {
     try {
       await sendMail(mailConfig, mail)
       process.stdout.write('✉ 已发送邮件通知。\n')
@@ -848,9 +1125,53 @@ async function main() {
       process.stderr.write(`⚠ 邮件发送失败：${error.message}\n`)
     }
   }
-  const failed = results.some(result => result.result === 'failed')
-  const unresolved = results.some(result => result.result === 'unresolved')
-  process.exit(failed ? 1 : unresolved ? 3 : 0)
+  if (takeover) {
+    // The session owns the terminal now: Ctrl+C is Claude's.
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) { process.removeAllListeners(signal); process.on(signal, () => {}) }
+    await handover(takeover.session, takeover.repo)
+  }
+  process.exit(EXIT_CODES[overall])
+}
+
+// --results-file, for refine-and-run: each spec's result and the hashes of its
+// documents and report taken right after its own review, so a wrapper commits
+// exactly what was reviewed (a later spec or the handover may edit them).
+export function resultsRecord(results) {
+  return results.map(result => ({
+    label: result.label, repo: result.repo ?? null, spec: result.spec ?? null, result: result.result, hashes: result.hashes ?? {},
+  }))
+}
+
+// The command that reviews one spec again, as the user typed its options.
+export function refineCommand(options, shown) {
+  return ['refine-plan', shown, ...(options.maxRounds !== 5 ? ['--max-rounds', String(options.maxRounds)] : []), ...options.also.flatMap(path => ['--also', path])].join(' ')
+}
+
+// The real side effects of refineSpec() for one prepared spec.
+function specDeps(options, prepared, claudeProblem) {
+  const { repo, spec, shown, documents, title } = prepared
+  let machineNotes = []
+  try { machineNotes = loadConfig(repo).machineNotes } catch { /* a broken file must not hide the review */ }
+  const number = /^(\d+)-/u.exec(basename(spec))?.[1]
+  const rerunCommand = refineCommand(options, shown)
+  return {
+    claudeProblem, label: number ? `M${Number(number)}` : basename(spec),
+    refineOnce: () => refineOnce(options, prepared),
+    context: result => ({
+      title, spec, repo, documents, outcome: result.outcome, problems: result.problems,
+      reportFile: result.paths?.reportFile ?? null, runDir: result.paths?.runDir ?? null, logFile: result.paths?.logFile ?? '(none)',
+      continueCommand: options.continueCommand ?? rerunCommand, rerunCommand, machineNotes,
+    }),
+    runClaude: ({ prompt, sessionId, resume, name }) => runClaude({
+      prompt, sessionId, resume, name, cwd: repo, nexts: FIX_DECISIONS, onChild: trackRoot, timeoutMs: options.claudeTimeoutMinutes * 60_000,
+      logFile: join(repo, LOGS, `claude-${basename(spec)}-${new Date().toISOString().replace(/[:.]/gu, '-')}.log`),
+    }),
+    snapshot: () => worktreeSnapshot(repo),
+    stray: (before, after) => strayChanges(before, after, documents, spec),
+    uuid: () => randomUUID(),
+    now: () => Date.now(),
+    log: text => process.stdout.write(text),
+  }
 }
 
 if (isMain(import.meta.url)) {

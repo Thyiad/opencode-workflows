@@ -13,6 +13,7 @@
     "run-milestones-auto": "src/run-milestones-auto.mjs",
     "run-gated-stages": "src/run-gated-stages.mjs",
     "refine-plan": "src/refine-plan.mjs",
+    "refine-and-run": "src/refine-and-run.mjs",
     "opencode-workflows-mail": "src/notify-mail.mjs"
   },
   "files": [
