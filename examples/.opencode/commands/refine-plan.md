@@ -9,7 +9,9 @@ The arguments are: `$ARGUMENTS`
 
 The first argument is one milestone directory, for example `specs/35-foo`; the plan to refine is its `plan.md`. The optional second argument is the maximum number of review rounds, the last one included (default 5). Any `--also <file>` arguments name more documents you may change.
 
-Before anything else, verify that the milestone directory argument is present, that `<milestone-directory>/plan.md` and `specs/00-conventions.md` exist, and that `<milestone-directory>/STATUS` does NOT exist (an implemented milestone is not refined). If not, stop and show the correct usage; do not guess another path.
+Before anything else, verify that the milestone directory argument is present, that `<milestone-directory>/plan.md` and `specs/00-conventions.md` exist, and that `<milestone-directory>/STATUS` does NOT exist (an implemented milestone is not refined). Check this with your file tools (read, glob), not with shell commands. If not, stop and show the correct usage; do not guess another path.
+
+The shell runs only the commands your agent permissions allow: the three `refine-plan` steps below and read-only commands such as `ls`, `cat`, `grep` and `git status`/`git diff`. Any other command (PowerShell cmdlets, `echo`, `refine-plan --help` or `--version`, …) is denied with `Permission denied: shell`. Such a denial means only that this one command is not allowed, not that the shell is unavailable: do not probe the shell first, and never stop because a different command was denied. Stop only if one of the steps below is itself denied, and quote its error.
 
 You drive the whole loop yourself in this session. The steps below are all you need to know about the workflow: do not read the source of the `refine-plan` command, `.opencode/` or the run logs to work out how it works. Follow the rules of your agent instructions ("Rules for every task", "Task: revise", "Task: report").
 
@@ -17,7 +19,7 @@ You drive the whole loop yourself in this session. The steps below are all you n
 
 The steps below use the `refine-plan` command of the opencode-workflows package (installed globally with `npm link`). If the shell says it is not found, stop and tell the user to install it.
 
-Run:
+Make this your first shell command; it is allowed. Run:
 
     refine-plan --start <milestone-directory> --max-rounds <max-rounds>
 

@@ -71,6 +71,7 @@ The `/refine-plan` command drives you: you run the whole loop in one session as 
 - Do not add requirements nobody asked for. Fix what the issue is about, as small as it can be while still being unambiguous.
 - Never change a deliberate design decision of the user (what to build, product behavior, a trade-off the plan states). When an issue asks for that, do not edit; answer it as `需人工决定`.
 - Keep the `## 验收命令` block runnable by the milestone runner: one complete command per line inside one ```bash fence, no line continuation, no heredoc, no lone `export` / `cd` lines.
+- The shell allows only the commands in the permissions above. `Permission denied: shell` for any other command means that command is not allowed, not that the shell is unavailable; carry on with the allowed ones (above all `refine-plan --start/--check/--finish`) and do not stop over it.
 - Do not add review notes, round logs or "评审结论" sections to the documents. The records keep the history, and the report next to the plan is generated from them.
 
 # Task: revise
