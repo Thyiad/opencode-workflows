@@ -7,12 +7,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
-  /* 由 claude.ai Slides 导出：每页 1920×1080，按窗口缩放。←/→、空格、点击翻页；N 显示演讲者备注；F 全屏。 */
+  /* 每页 1920×1080，按窗口缩放。←/→、空格、点击翻页；N 备注；F 全屏。 */
   * { box-sizing: border-box; margin: 0; }
   html, body { height: 100%; background: #0B1422; overflow: hidden; }
   #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 0 0; }
   .slide { position: absolute; inset: 0; width: 1920px; height: 1080px; overflow: hidden; }
-  .slide:not(.active) { display: none !important; }
+  @media screen { .slide:not(.active) { display: none !important; } }
   .slide > aside { display: none; }
   h1 { font-size: 96px; font-weight: 600; line-height: 1.1; }
   h2 { font-size: 64px; font-weight: 600; line-height: 1.15; }
@@ -22,13 +22,33 @@
   table { border-collapse: collapse; }
   th, td { padding: 0.35em 0.6em; text-align: left; border-bottom: 1px solid #D6D1C4; font-weight: 400; }
   th { font-weight: 700; }
-  #notes { position: fixed; left: 0; right: 0; bottom: 0; max-height: 35vh; overflow: auto; padding: 16px 24px; background: rgba(11,20,34,.94); color: #E6EAF0; font: 16px/1.6 'Noto Sans SC', sans-serif; display: none; }
+  a { color: inherit; text-underline-offset: .2em; }
+  a:hover { text-decoration-thickness: 3px; }
+  :focus-visible { outline: 3px solid #F2A65A; outline-offset: 5px; }
+  #commands th, #commands td { padding: 22px 28px; }
+  #commands td:first-child { font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 26px; }
+  #notes { position: fixed; left: 0; right: 0; bottom: 52px; max-height: 30vh; overflow: auto; padding: 16px 24px; background: #0B1422; color: #E6EAF0; font: 16px/1.6 'Noto Sans SC', sans-serif; display: none; }
   #notes.show { display: block; }
-  #counter { position: fixed; right: 16px; bottom: 12px; color: #7A8291; font: 13px 'JetBrains Mono', monospace; }
+  #controls { position: fixed; inset: auto 0 0; height: 52px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px; background: #0B1422; color: #D5DCE6; font: 14px 'Noto Sans SC', sans-serif; }
+  #controls button { border: 1px solid #3A4A63; border-radius: 6px; padding: 5px 10px; background: transparent; color: inherit; font: inherit; white-space: nowrap; cursor: pointer; }
+  #controls button:hover, #controls button[aria-pressed="true"] { background: #24344D; }
+  #controls button:disabled { opacity: .35; cursor: default; }
+  #counter { min-width: 64px; text-align: center; font: 13px 'JetBrains Mono', monospace; }
+  #hint { color: #A9B4C6; }
+  #progress { position: fixed; bottom: 52px; left: 0; height: 2px; background: #F2A65A; pointer-events: none; }
+  @media (max-width: 720px) { #hint { display: none; } #controls { gap: 8px; font-size: 12px; } }
+  @media print {
+    @page { size: 20in 11.25in; margin: 0; }
+    html, body { height: auto; overflow: visible; background: white; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    #stage { position: static; width: 1920px; height: auto; transform: none !important; }
+    .slide { position: relative; break-after: page; page-break-after: always; }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    #controls, #notes, #progress { display: none !important; }
+  }
 </style>
 </head>
 <body>
-<div id="stage">
+<main id="stage" aria-label="opencode-workflows 介绍">
 <section class="slide" id="cover" data-transition="fade" style="background:#0F1B2D;color:#F4F2EC;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:center;gap:40px">
 <p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:32px;color:#F2A65A;letter-spacing:2px">$ refine-and-run --from 35 --to 37</p>
 <h1 style="font-size:132px;font-weight:900;line-height:1.05;letter-spacing:-2px">opencode-workflows</h1>
@@ -39,7 +59,7 @@
 <section class="slide" id="why" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
 <div style="display:flex;flex-direction:column;gap:16px">
 <p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">为什么需要它</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.15">让 agent 写代码不难，难的是放心让它自己跑一整夜</h2>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">让 agent 写代码不难，难的是无人值守</h2>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px">
 <div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:40px;border:1px solid #E2DED3;border-radius:16px">
@@ -67,53 +87,31 @@
 <p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">全景</p>
 <h2 style="font-size:72px;font-weight:700;line-height:1.15">从一份 plan 到一个已推送的提交</h2>
 </div>
-<div style="display:flex;flex-direction:row;align-items:center;gap:16px">
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px dashed #A9A396;border-radius:16px">
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#7A8291">可选</p>
-<h3 style="font-size:34px;font-weight:700">需求文档</h3>
-<p style="font-size:24px;line-height:1.45;color:#4A5568">产品确认的 FR / BR 条目</p>
+<p style="font-size:30px;color:#4A5568">输入：初版 plan，可引用已确认的需求文档</p>
+<div style="border-top:4px solid #B5541A;padding-top:24px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:30px;font-weight:600;color:#B5541A;margin-bottom:24px">refine-and-run</p>
+<div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:32px">
+<div style="background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-size:26px;color:#B5541A">01 · refine-plan</p>
+<h3 style="font-size:36px;margin:16px 0">评审全部 plan</h3>
+<p style="font-size:28px;color:#4A5568">逐个完善，记录修改与结论</p>
 </div>
-<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">refine-plan</p>
-<h3 style="font-size:34px;font-weight:700">完善 plan</h3>
-<p style="font-size:24px;line-height:1.45;color:#4A5568">评审、修改、出修改记录</p>
+<div style="background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-size:26px;color:#B5541A">02 · Git</p>
+<h3 style="font-size:36px;margin:16px 0">提交通过的 plan</h3>
+<p style="font-size:28px;color:#4A5568">只提交评审时的文档版本</p>
 </div>
-<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">run-milestones</p>
-<h3 style="font-size:34px;font-weight:700">实现与审查</h3>
-<p style="font-size:24px;line-height:1.45;color:#4A5568">实现、审查、验收、提交</p>
-</div>
-<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">…-auto</p>
-<h3 style="font-size:34px;font-weight:700">失败修复</h3>
-<p style="font-size:24px;line-height:1.45;color:#4A5568">Claude Code 分析修复</p>
-</div>
-<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">gated-stages</p>
-<h3 style="font-size:34px;font-weight:700">安全门</h3>
-<p style="font-size:24px;line-height:1.45;color:#4A5568">阶段之间做安全评审</p>
+<div style="background:#0F1B2D;padding:32px;border-radius:16px;color:#F4F2EC">
+<p style="font-size:26px;color:#F2A65A">03 · run-milestones-auto</p>
+<h3 style="font-size:36px;margin:16px 0">实现、审查、验收并推送</h3>
+<p style="font-size:28px;color:#BFC8D6">内部运行 run-milestones，失败时尝试 Claude Code 修复</p>
 </div>
 </div>
-<div style="display:flex;flex-direction:row;gap:16px;align-items:center">
-<div style="flex:1"></div>
-<div style="width:48px"></div>
-<div style="flex:3;display:flex;flex-direction:column;align-items:center;gap:4px;border-top:4px solid #B5541A;padding:16px 0 0 0">
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">refine-and-run</p>
-<p style="font-size:24px;color:#4A5568">一条命令串起这三段：plan 全部就绪才写代码</p>
 </div>
-<div style="width:48px"></div>
-<div style="flex:1"></div>
-</div>
-<div style="display:flex;flex-direction:row;align-items:center;gap:24px;background:#0F1B2D;padding:32px 40px;border-radius:16px">
-<svg width="48" height="48" viewBox="0 0 24 24" style="flex:none" fill="none" stroke="#F2A65A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
-<p style="font-size:30px;color:#F4F2EC">每次运行结束都发邮件：成功写清完成了什么，失败写清根因和你要做什么</p>
-</div>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">分阶段执行：</b>run-gated-stages 按流水线调用 run-milestones-auto，在配置的阶段之间加安全评审。</p>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">结果通知：</b>配置邮件后，评审与自动执行入口发送结果，失败时说明根因和接续步骤。</p>
 <p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 03</p>
-<aside>整条链路：需求（可选）→ refine-plan 把草稿 plan 打磨到可实现 → run-milestones 逐个里程碑实现并提交 → 失败时 run-milestones-auto 交给 Claude Code 修 → run-gated-stages 在阶段之间加安全评审。新的 refine-and-run 把前三段串成一条命令。所有命令都作用于当前目录所在的 git 仓库。</aside>
+<aside>总览有两种入口：refine-and-run 先用 refine-plan 评审全部 plan 并提交，再交给 run-milestones-auto 实现。run-milestones-auto 内部调用 run-milestones，失败才尝试 Claude Code 修复。run-gated-stages 则按流水线分阶段调用 run-milestones-auto，并在配置了安全门的阶段后评审。邮件需要先配置；普通 run-milestones 不负责发邮件。</aside>
 </section>
 <section class="slide" id="commands" data-transition="fade" style="background:#f6f5f0">
   <p id="e1-1enlbrn" style="position:absolute; bottom:64px; left:128px; width:1664px; font-family:'Noto Sans SC', Arial, sans-serif; font-size:24px; color:#7a8291">opencode-workflows · 04</p>
@@ -126,7 +124,7 @@
     <tr style="background:#fffefa"><td>refine-plan</td><td>自动评审、修改一份 plan，需要你时先让 Claude 处理</td></tr>
     <tr style="background:#fffefa"><td>run-milestones</td><td>按编号跑 specs/NN-*/plan.md：实现 → 独立审查 → 自己验收 → 提交</td></tr>
     <tr style="background:#fffefa"><td>run-milestones-auto</td><td>包一层：跑完发邮件，失败时先让 Claude Code 分析修复</td></tr>
-    <tr style="background:#fff4e8"><td>refine-and-run</td><td>新增：先评审并提交全部 plan，都通过后再 run-milestones-auto</td></tr>
+    <tr style="background:#fff4e8"><td>refine-and-run</td><td>先评审并提交全部 plan，都通过后再 run-milestones-auto</td></tr>
     <tr style="background:#fffefa"><td>run-gated-stages</td><td>按流水线文件分阶段跑，阶段之间做安全评审和收尾检查</td></tr>
     <tr style="background:#fffefa"><td>opencode-workflows-mail</td><td>发一封测试邮件，确认通知配好了</td></tr>
   </table>
@@ -240,7 +238,7 @@
 <section class="slide" id="watchdog" data-transition="fade" style="background:#EDEAE1;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:64px">
 <div style="display:flex;flex-direction:column;gap:16px">
 <p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">防卡死</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.15">没有任何东西能永远挂着</h2>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">用超时和看门狗限制等待时间</h2>
 </div>
 <div style="display:flex;flex-direction:row;gap:32px">
 <div style="flex:1;display:flex;flex-direction:column;gap:16px;border-top:4px solid #14213D;padding:32px 0 0 0">
@@ -301,7 +299,7 @@
 </section>
 <section class="slide" id="refinerun" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
 <div style="display:flex;flex-direction:column;gap:16px">
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">refine-and-run · 新增</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">refine-and-run</p>
 <h2 style="font-size:72px;font-weight:700;line-height:1.15">写完初版 plan，一条命令跑到底</h2>
 </div>
 <div style="display:flex;flex-direction:row;align-items:stretch;gap:24px">
@@ -353,7 +351,7 @@
 <div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
 <p style="font-size:26px;font-weight:700;color:#B5541A">第 3 步</p>
 <h3 style="font-size:34px;font-weight:700">全新一轮</h3>
-<p style="font-size:26px;line-height:1.5;color:#4A5568">新的 Claude 会话、不知道之前修了什么，直到找不出 low 以上的问题</p>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">新的 Claude 会话、不知道之前修了什么，直到新一轮不再发现 high / medium 问题</p>
 </div>
 </div>
 <p style="font-size:28px;line-height:1.5;color:#4A5568">阶段、检查清单、收尾检查都写在流水线文件里；通过的安全门按 HEAD 记住，重跑不会重复评审。</p>
@@ -376,11 +374,11 @@
 </div>
 <div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:2px solid #3A4A63;padding:28px 0 0 0">
 <h3 style="font-size:32px;font-weight:700;color:#F2A65A">提交由脚本做</h3>
-<p style="font-size:26px;line-height:1.5;color:#BFC8D6">agent 和 Claude 都不提交、不推送；受保护的文档谁都不能改</p>
+<p style="font-size:26px;line-height:1.5;color:#BFC8D6">agent 和 Claude 都不提交、不推送；自动修复和安全评审不能改受保护文档</p>
 </div>
 </div>
 <p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 12</p>
-<aside>这是整套工具的核心思想。还有：邮件授权码只交给发信模块，不进环境变量，opencode 和 Claude 都读不到；specs/**/plan.md 和 00-conventions.md 总是受保护。</aside>
+<aside>这是整套工具的核心思想。还有：邮件授权码只交给发信模块，不进环境变量，opencode 和 Claude 都读不到；自动修复和安全评审总是保护 specs/**/plan.md 和 00-conventions.md；refine-plan 按显式允许的范围修改文档。</aside>
 </section>
 <section class="slide" id="onboard" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
 <div style="display:flex;flex-direction:column;gap:16px">
@@ -391,7 +389,7 @@
 <div style="display:flex;flex-direction:row;align-items:center;gap:40px;padding:22px 0;border-top:1px solid #D6D1C4">
 <p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:36px;font-weight:600;color:#B5541A;width:72px">1</p>
 <p style="font-size:30px;width:420px;font-weight:700">安装全局命令</p>
-<p style="flex:1;font-size:28px;color:#4A5568">npm link；零依赖，需要 Node 22+、opencode v2，Claude Code 可选</p>
+<p style="flex:1;font-size:28px;color:#4A5568">npm link；Node 22+、opencode ≥ 2.0.18<br>自动修复和安全门还需已登录的 Claude Code ≥ 2.1.259</p>
 </div>
 <div style="display:flex;flex-direction:row;align-items:center;gap:40px;padding:22px 0;border-top:1px solid #D6D1C4">
 <p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:36px;font-weight:600;color:#B5541A;width:72px">2</p>
@@ -415,20 +413,20 @@
 </div>
 </div>
 <p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 13</p>
-<aside>.gitignore 里加上 .milestone-logs/ 和 .plan-refine-logs/。每对 *-fallback.md 要和主 agent 保持一致，只有 description 和 model 不同。需求文档可以放在 docs/requirements/，plan 引用后评审会按覆盖的条目查漏。更新只需在工具目录 git pull。</aside>
+<aside>自动修复和安全门需要已登录的 Claude Code ≥ 2.1.259；配置了安全门时，缺少 Claude Code 会拒绝运行，可用 --skip-gate 跳过。.gitignore 里加上 .milestone-logs/ 和 .plan-refine-logs/。每对 *-fallback.md 要和主 agent 保持一致，只有 description 和 model 不同。需求文档可以放在 docs/requirements/，plan 引用后评审会按覆盖的条目查漏。更新只需在工具目录 git pull。</aside>
 </section>
 <section class="slide" id="usage" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
 <div style="display:flex;flex-direction:column;gap:16px">
 <p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">日常用法</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.15">晚上敲一行，早上看邮件</h2>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">从预览到执行</h2>
 </div>
 <div style="display:flex;flex-direction:column;gap:10px;background:#0F1B2D;padding:40px 56px;border-radius:16px;font-family:'JetBrains Mono', 'Courier New', monospace">
-<p style="font-size:28px;color:#7F8CA3"># 一条命令：评审全部 plan → 提交 plan → 实现 → 推送</p>
+<p style="font-size:28px;color:#A9B4C6"># 在目标仓库的功能分支运行，先预览再执行</p>
+<p style="font-size:30px;color:#F4F2EC">refine-and-run --from 35 --to 37 --dry-run</p>
 <p style="font-size:30px;color:#F2A65A">refine-and-run --from 35 --to 37</p>
-<p style="font-size:28px;color:#7F8CA3;padding:20px 0 0 0"># 也可以分开跑</p>
-<p style="font-size:30px;color:#F4F2EC">refine-plan --only 35,36 --max-rounds 3</p>
+<p style="font-size:28px;color:#A9B4C6;padding:20px 0 0 0"># 已有就绪的 plan：直接执行</p>
 <p style="font-size:30px;color:#F4F2EC">run-milestones-auto --from 35 --to 37</p>
-<p style="font-size:28px;color:#7F8CA3;padding:20px 0 0 0"># 分阶段、带安全门</p>
+<p style="font-size:28px;color:#A9B4C6;padding:20px 0 0 0"># 分阶段、带安全门</p>
 <p style="font-size:30px;color:#F4F2EC">run-gated-stages --pipeline oauth</p>
 </div>
 <p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 14</p>
@@ -436,40 +434,93 @@
 </section>
 <section class="slide" id="closing" data-transition="fade" style="background:#0F1B2D;color:#F4F2EC;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:center;gap:40px">
 <h1 style="font-size:112px;font-weight:900;line-height:1.15">你写 plan，<br>它交付提交。</h1>
-<p style="font-size:36px;line-height:1.5;color:#BFC8D6;width:1300px">审查有人做，验收自己跑，卡住会被杀，失败有人修，结果发到邮箱。</p>
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:30px;color:#F2A65A">gitee.com/Thyiad/opencode-workflows</p>
+<p style="font-size:36px;line-height:1.5;color:#BFC8D6;width:1300px">独立审查，脚本验收，超时中止。失败尝试修复，配置邮件后发送结果。</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:30px;color:#F2A65A"><a href="https://github.com/Thyiad/opencode-workflows" target="_blank" rel="noopener noreferrer">github.com/Thyiad/opencode-workflows</a></p>
 <aside>结束。欢迎提问。</aside>
 </section>
-</div>
-<div id="notes"></div>
-<div id="counter"></div>
+</main>
+<div id="notes" role="region" aria-label="演讲者备注" tabindex="0"></div>
+<div id="progress" aria-hidden="true"></div>
+<nav id="controls" aria-label="演示控制">
+  <button id="previous" type="button" aria-label="上一页（←）">← 上一页</button>
+  <output id="counter" aria-live="polite" aria-atomic="true"></output>
+  <button id="next" type="button" aria-label="下一页（→ 或空格）">下一页 →</button>
+  <button id="toggle-notes" type="button" aria-controls="notes" aria-pressed="false">备注 N</button>
+  <button id="fullscreen" type="button" aria-pressed="false">全屏 F</button>
+  <span id="hint">← / → 翻页 · Home / End 首末页 · 浏览器打印可导出全部页</span>
+</nav>
 <script>
   const slides = [...document.querySelectorAll('.slide')]
   const stage = document.getElementById('stage'), notes = document.getElementById('notes'), counter = document.getElementById('counter')
-  let i = Math.min(Math.max(parseInt(location.hash.slice(1)) - 1 || 0, 0), slides.length - 1)
+  const controls = document.getElementById('controls'), progress = document.getElementById('progress')
+  const previous = document.getElementById('previous'), next = document.getElementById('next')
+  const notesButton = document.getElementById('toggle-notes'), fullscreenButton = document.getElementById('fullscreen')
+  let i = 0
+  function indexFromHash() {
+    const hash = location.hash.slice(1)
+    const index = slides.findIndex(slide => slide.id === hash)
+    return index >= 0 ? index : (/^\d+$/.test(hash) ? Number(hash) - 1 : 0)
+  }
   function fit() {
-    const k = Math.min(innerWidth / 1920, innerHeight / 1080)
+    const height = Math.max(1, innerHeight - controls.offsetHeight - (notes.classList.contains('show') ? notes.offsetHeight : 0))
+    const k = Math.min(innerWidth / 1920, height / 1080)
+    stage.style.top = `${height / 2}px`
     stage.style.transform = `scale(${k}) translate(-50%, -50%)`
   }
   function show(n) {
     i = Math.min(Math.max(n, 0), slides.length - 1)
-    slides.forEach((s, j) => s.classList.toggle('active', j === i))
-    const aside = slides[i].querySelector('aside')
-    notes.textContent = aside ? aside.textContent : ''
+    slides.forEach((slide, index) => {
+      slide.classList.toggle('active', index === i)
+      slide.setAttribute('aria-hidden', String(index !== i))
+      slide.inert = index !== i
+      slide.setAttribute('aria-label', `${index + 1} / ${slides.length}`)
+    })
+    notes.textContent = slides[i].querySelector('aside')?.textContent || ''
+    notes.scrollTop = 0
     counter.textContent = `${i + 1} / ${slides.length}`
+    previous.disabled = i === 0
+    next.disabled = i === slides.length - 1
+    progress.style.width = `${(i + 1) / slides.length * 100}%`
     history.replaceState(null, '', '#' + (i + 1))
+    fit()
   }
+  function toggleNotes() {
+    notesButton.setAttribute('aria-pressed', String(notes.classList.toggle('show')))
+    fit()
+  }
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen()
+      else if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen()
+    } catch (error) { console.warn('无法切换全屏，请使用浏览器的全屏菜单。', error) }
+  }
+  previous.addEventListener('click', () => show(i - 1))
+  next.addEventListener('click', () => show(i + 1))
+  notesButton.addEventListener('click', toggleNotes)
+  fullscreenButton.addEventListener('click', toggleFullscreen)
+  fullscreenButton.disabled = !document.fullscreenEnabled
+  addEventListener('fullscreenchange', () => {
+    fullscreenButton.setAttribute('aria-pressed', String(Boolean(document.fullscreenElement)))
+    fit()
+  })
   addEventListener('resize', fit)
+  addEventListener('hashchange', () => show(indexFromHash()))
   addEventListener('keydown', e => {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.target.closest('input, textarea, select, [contenteditable="true"], #notes')) return
+    if ([' ', 'Enter'].includes(e.key) && e.target.closest('a, button')) return
     if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(i + 1) }
     else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); show(i - 1) }
-    else if (e.key === 'Home') show(0)
-    else if (e.key === 'End') show(slides.length - 1)
-    else if (e.key === 'n' || e.key === 'N') notes.classList.toggle('show')
-    else if (e.key === 'f' || e.key === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()
+    else if (e.key === 'Home') { e.preventDefault(); show(0) }
+    else if (e.key === 'End') { e.preventDefault(); show(slides.length - 1) }
+    else if (e.key.toLowerCase() === 'n') toggleNotes()
+    else if (e.key.toLowerCase() === 'f') toggleFullscreen()
   })
-  addEventListener('click', e => { if (!notes.contains(e.target)) show(e.clientX < innerWidth / 3 ? i - 1 : i + 1) })
-  fit(); show(i)
+  addEventListener('click', e => {
+    if (e.button !== 0 || e.target.closest('a, button, input, textarea, select, [contenteditable="true"], #notes, #controls') || getSelection()?.toString()) return
+    show(e.clientX < innerWidth / 3 ? i - 1 : i + 1)
+  })
+  document.fonts.ready.then(fit)
+  show(indexFromHash())
 </script>
 </body>
 </html>
