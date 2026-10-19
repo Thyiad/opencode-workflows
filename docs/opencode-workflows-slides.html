@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>opencode-workflows 介绍</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* 由 claude.ai Slides 导出：每页 1920×1080，按窗口缩放。←/→、空格、点击翻页；N 显示演讲者备注；F 全屏。 */
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: #0B1422; overflow: hidden; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 0 0; }
+  .slide { position: absolute; inset: 0; width: 1920px; height: 1080px; overflow: hidden; }
+  .slide:not(.active) { display: none !important; }
+  .slide > aside { display: none; }
+  h1 { font-size: 96px; font-weight: 600; line-height: 1.1; }
+  h2 { font-size: 64px; font-weight: 600; line-height: 1.15; }
+  h3 { font-size: 44px; font-weight: 600; line-height: 1.2; }
+  p { font-size: 32px; line-height: 1.4; }
+  ul, ol { padding-left: 1.2em; }
+  table { border-collapse: collapse; }
+  th, td { padding: 0.35em 0.6em; text-align: left; border-bottom: 1px solid #D6D1C4; font-weight: 400; }
+  th { font-weight: 700; }
+  #notes { position: fixed; left: 0; right: 0; bottom: 0; max-height: 35vh; overflow: auto; padding: 16px 24px; background: rgba(11,20,34,.94); color: #E6EAF0; font: 16px/1.6 'Noto Sans SC', sans-serif; display: none; }
+  #notes.show { display: block; }
+  #counter { position: fixed; right: 16px; bottom: 12px; color: #7A8291; font: 13px 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+<div id="stage">
+<section class="slide" id="cover" data-transition="fade" style="background:#0F1B2D;color:#F4F2EC;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:center;gap:40px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:32px;color:#F2A65A;letter-spacing:2px">$ refine-and-run --from 35 --to 37</p>
+<h1 style="font-size:132px;font-weight:900;line-height:1.05;letter-spacing:-2px">opencode-workflows</h1>
+<p style="font-size:52px;font-weight:500;line-height:1.35;color:#F4F2EC;width:1400px">让 AI 无人值守地完成<br>「完善 plan → 实现 → 审查 → 验收 → 提交」</p>
+<p style="font-size:28px;color:#A9B4C6">六个全局命令 · 零依赖 Node.js · 适用于任何接入了这套流程的仓库</p>
+<aside>开场：这是一组命令行工具，把 opencode 的 agent 编排成一条可以过夜跑完的开发流水线。一句话：你写 plan，它负责把 plan 变成经过审查和验收的提交。</aside>
+</section>
+<section class="slide" id="why" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">为什么需要它</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">让 agent 写代码不难，难的是放心让它自己跑一整夜</h2>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:40px;border:1px solid #E2DED3;border-radius:16px">
+<h3 style="font-size:36px;font-weight:700">它会说「做完了」</h3>
+<p style="font-size:28px;line-height:1.5;color:#4A5568">agent 的自述不可信：没跑通的测试、漏掉的需求，都可能被报告成通过。</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:40px;border:1px solid #E2DED3;border-radius:16px">
+<h3 style="font-size:36px;font-weight:700">它会卡住</h3>
+<p style="font-size:28px;line-height:1.5;color:#4A5568">安装挂起、测试死锁、模型不可用——没人盯着，一等就是一整夜。</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:40px;border:1px solid #E2DED3;border-radius:16px">
+<h3 style="font-size:36px;font-weight:700">它会越界</h3>
+<p style="font-size:28px;line-height:1.5;color:#4A5568">改了不该改的文档、跑了不该跑的脚本、悄悄提交或推送。</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:40px;border:1px solid #E2DED3;border-radius:16px">
+<h3 style="font-size:36px;font-weight:700">失败了没人知道</h3>
+<p style="font-size:28px;line-height:1.5;color:#4A5568">早上醒来才发现第二个里程碑就停了，后面全没动。</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 02</p>
+<aside>四个痛点，后面每个设计都对应其中一个：自述不可信 → 自己重跑验收、看 git；会卡住 → 看门狗和超时；会越界 → 权限白名单和范围检查；失败没人知道 → 邮件和自动修复。</aside>
+</section>
+<section class="slide" id="flow" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">全景</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">从一份 plan 到一个已推送的提交</h2>
+</div>
+<div style="display:flex;flex-direction:row;align-items:center;gap:16px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px dashed #A9A396;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#7A8291">可选</p>
+<h3 style="font-size:34px;font-weight:700">需求文档</h3>
+<p style="font-size:24px;line-height:1.45;color:#4A5568">产品确认的 FR / BR 条目</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">refine-plan</p>
+<h3 style="font-size:34px;font-weight:700">完善 plan</h3>
+<p style="font-size:24px;line-height:1.45;color:#4A5568">评审、修改、出修改记录</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">run-milestones</p>
+<h3 style="font-size:34px;font-weight:700">实现与审查</h3>
+<p style="font-size:24px;line-height:1.45;color:#4A5568">实现、审查、验收、提交</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">…-auto</p>
+<h3 style="font-size:34px;font-weight:700">失败修复</h3>
+<p style="font-size:24px;line-height:1.45;color:#4A5568">Claude Code 分析修复</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:28px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#B5541A">gated-stages</p>
+<h3 style="font-size:34px;font-weight:700">安全门</h3>
+<p style="font-size:24px;line-height:1.45;color:#4A5568">阶段之间做安全评审</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:row;gap:16px;align-items:center">
+<div style="flex:1"></div>
+<div style="width:48px"></div>
+<div style="flex:3;display:flex;flex-direction:column;align-items:center;gap:4px;border-top:4px solid #B5541A;padding:16px 0 0 0">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">refine-and-run</p>
+<p style="font-size:24px;color:#4A5568">一条命令串起这三段：plan 全部就绪才写代码</p>
+</div>
+<div style="width:48px"></div>
+<div style="flex:1"></div>
+</div>
+<div style="display:flex;flex-direction:row;align-items:center;gap:24px;background:#0F1B2D;padding:32px 40px;border-radius:16px">
+<svg width="48" height="48" viewBox="0 0 24 24" style="flex:none" fill="none" stroke="#F2A65A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
+<p style="font-size:30px;color:#F4F2EC">每次运行结束都发邮件：成功写清完成了什么，失败写清根因和你要做什么</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 03</p>
+<aside>整条链路：需求（可选）→ refine-plan 把草稿 plan 打磨到可实现 → run-milestones 逐个里程碑实现并提交 → 失败时 run-milestones-auto 交给 Claude Code 修 → run-gated-stages 在阶段之间加安全评审。新的 refine-and-run 把前三段串成一条命令。所有命令都作用于当前目录所在的 git 仓库。</aside>
+</section>
+<section class="slide" id="commands" data-transition="fade" style="background:#f6f5f0">
+  <p id="e1-1enlbrn" style="position:absolute; bottom:64px; left:128px; width:1664px; font-family:'Noto Sans SC', Arial, sans-serif; font-size:24px; color:#7a8291">opencode-workflows · 04</p>
+  <div id="p218ab6efebb6r0-53e3d5c1" style="position:absolute; top:128px; left:128px; width:1664px; height:138px; display:flex; flex-direction:column; gap:16px">
+    <p style="font-family:'Noto Sans SC', Arial, sans-serif; font-size:28px; font-weight:700; letter-spacing:2px; color:#b5541a">六个命令</p>
+    <h2 style="font-family:'Noto Sans SC', Arial, sans-serif; font-size:72px; font-weight:700; line-height:1.15; color:#14213d">一层包一层，各管一件事</h2>
+  </div>
+  <table id="p218ab6efebb6r1-53e3d5c1" style="position:absolute; top:326.9px; left:50%; width:1664px; font-family:'Noto Sans SC', Arial, sans-serif; font-size:28px; color:#14213d; border-radius:16px; transform:translateX(-50%)">
+    <tr style="background:#e9e5da"><th style="width:34%">命令</th><th style="width:66%">做什么</th></tr>
+    <tr style="background:#fffefa"><td>refine-plan</td><td>自动评审、修改一份 plan，需要你时先让 Claude 处理</td></tr>
+    <tr style="background:#fffefa"><td>run-milestones</td><td>按编号跑 specs/NN-*/plan.md：实现 → 独立审查 → 自己验收 → 提交</td></tr>
+    <tr style="background:#fffefa"><td>run-milestones-auto</td><td>包一层：跑完发邮件，失败时先让 Claude Code 分析修复</td></tr>
+    <tr style="background:#fff4e8"><td>refine-and-run</td><td>新增：先评审并提交全部 plan，都通过后再 run-milestones-auto</td></tr>
+    <tr style="background:#fffefa"><td>run-gated-stages</td><td>按流水线文件分阶段跑，阶段之间做安全评审和收尾检查</td></tr>
+    <tr style="background:#fffefa"><td>opencode-workflows-mail</td><td>发一封测试邮件，确认通知配好了</td></tr>
+  </table>
+  <aside>refine-and-run 依次调 refine-plan 和 run-milestones-auto；run-gated-stages 调 run-milestones-auto，run-milestones-auto 调 run-milestones。每个命令都有 --help，完整行为写在 src/ 下各文件开头的注释里。npm link 一次，全局可用。</aside>
+</section>
+<section class="slide" id="refine" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">refine-plan</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">先把 plan 磨到能直接实现</h2>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:48px">
+<div style="display:flex;flex-direction:column;gap:24px">
+<div style="display:flex;flex-direction:row;align-items:center;gap:24px">
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-radius:16px">
+<h3 style="font-size:32px;font-weight:700">plan-editor</h3>
+<p style="font-size:24px;color:#4A5568">DeepSeek · 负责修改</p>
+</div>
+<svg class="conn" width="72" height="24" viewBox="0 0 72 24" style="flex:none" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="70" y2="12"/><path d="M70 12 L58 4 M70 12 L58 20"/><path d="M2 12 L14 4 M2 12 L14 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-radius:16px">
+<h3 style="font-size:32px;font-weight:700">plan-reviewer</h3>
+<p style="font-size:24px;color:#4A5568">GPT · 只读评审</p>
+</div>
+</div>
+<ul style="font-size:28px;line-height:1.55;color:#4A5568">
+<li>循环到评审通过，或达到 --max-rounds 上限</li>
+<li>涉及设计决定的问题不改，标成「需人工决定」</li>
+<li>默认只改 plan.md，其他文档要用 --also 指明</li>
+<li>GPT 不可用时自动换 Claude 评审</li>
+</ul>
+</div>
+<div style="display:flex;flex-direction:column;gap:20px;background:#0F1B2D;color:#F4F2EC;padding:40px;border-radius:16px">
+<h3 style="font-size:32px;font-weight:700;color:#F2A65A">收尾检查：不信 agent 的自述</h3>
+<ul style="font-size:28px;line-height:1.55;color:#D5DCE6">
+<li>改动只在允许范围内的文档</li>
+<li>每轮评审前都记录了文档版本</li>
+<li>通过的正是当前内容</li>
+<li>轮次没超限，验收命令能解析</li>
+</ul>
+<p style="font-size:26px;line-height:1.5;color:#A9B4C6">结果写进 refine-report.md；本身不提交，由你或 refine-and-run 提交。</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 05</p>
+<aside>批量模式：--only 35,36 或 --from 35 --to 37，逐个评审，每个规格独立会话，已实现的跳过，最后一封汇总邮件。需要你时怎么办见下一页。</aside>
+</section>
+<section class="slide" id="refineclaude" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">refine-plan · 需要你时</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">先让 Claude 处理一轮，再来找你</h2>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px">
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-top:6px solid #2F6DB5;border-radius:12px">
+<h3 style="font-size:34px;font-weight:700">能找到答案的</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">从代码、约定、需求文档里找到答案，直接改 plan，然后在新会话里从第 1 轮重新评审</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-top:6px solid #2F6DB5;border-radius:12px">
+<h3 style="font-size:34px;font-weight:700">要你决定的</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">不替你拍板：每个问题整理成选项和推荐，写进邮件</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-top:6px solid #B5541A;border-radius:12px">
+<h3 style="font-size:34px;font-weight:700">越界的</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">改了范围以外的文件，立即停下，不再评审</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:row;gap:48px;align-items:start">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px">
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">触发：</b>运行失败、达到轮次上限仍有阻塞问题，或评审通过但有「需人工决定」的问题。</p>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">接手：</b>终端里用 Remote Control 打开那个会话；做完决定后带 --accept-decisions 重跑。</p>
+</div>
+<table style="width:560px;font-size:26px;color:#14213D;font-family:'JetBrains Mono', 'Noto Sans SC', monospace">
+<tr style="background:#E9E5DA"><th style="width:28%;text-align:left">退出码</th><th style="width:72%;text-align:left">含义</th></tr>
+<tr style="background:#FFFEFA"><td>0</td><td>通过</td></tr>
+<tr style="background:#FFFEFA"><td>4</td><td>通过，但要你决定</td></tr>
+<tr style="background:#FFFEFA"><td>3</td><td>达到上限仍有阻塞</td></tr>
+<tr style="background:#FFFEFA"><td>1</td><td>运行失败</td></tr>
+</table>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 06</p>
+<aside>--fix-rounds 控制 Claude 处理几轮，默认 1，0 不处理。Claude 只能改范围内的文档，重新评审时评审员也会复核 Claude 的修改。Claude 处理过时，refine-report.md 末尾多一节「无人值守 Claude 的处理」。批量时每个规格各自处理，汇总邮件列出每个要接管的会话。没装 Claude Code 也照常运行，只是不自动处理。</aside>
+</section>
+<section class="slide" id="milestones" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">run-milestones</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">每个里程碑，同样的四步</h2>
+</div>
+<div style="display:flex;flex-direction:row;gap:24px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:64px;font-weight:600;color:#B5541A;line-height:1.1">01</p>
+<h3 style="font-size:36px;font-weight:700">实现</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">新的 opencode 会话里跑 /implement-plan，implementer 按 plan 写代码</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:64px;font-weight:600;color:#B5541A;line-height:1.1">02</p>
+<h3 style="font-size:36px;font-weight:700">独立审查</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">只读的 reviewer 对照 plan 审查，有问题就修、再审，通过才写 STATUS</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:64px;font-weight:600;color:#B5541A;line-height:1.1">03</p>
+<h3 style="font-size:36px;font-weight:700">自己验收</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">脚本亲自重跑 plan 里「## 验收命令」的每一行</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:64px;font-weight:600;color:#B5541A;line-height:1.1">04</p>
+<h3 style="font-size:36px;font-weight:700">提交</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">整个里程碑一个提交，接着下一个；任何失败都停下并提示怎么续跑</p>
+</div>
+</div>
+<p style="font-size:28px;line-height:1.5;color:#4A5568">agent 只能读、改、跑白名单里的命令；<b style="color:#14213D">提交和推送只由脚本做</b>。中断后用 --resume 接着做，或 --review 直接进审查。</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 07</p>
+<aside>规格目录 specs/NN-名字/plan.md，第一个 # 标题是名称，必须有 ## 验收命令 代码块。实现用 DeepSeek，审查用 GPT，GPT 不可用时换 Claude。也支持跨仓库占位：plan.md 里写 milestone-repo 和 milestone-spec，到这个编号时切到另一个仓库去实现。</aside>
+</section>
+<section class="slide" id="watchdog" data-transition="fade" style="background:#EDEAE1;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:64px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">防卡死</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">没有任何东西能永远挂着</h2>
+</div>
+<div style="display:flex;flex-direction:row;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;border-top:4px solid #14213D;padding:32px 0 0 0">
+<p style="font-size:120px;font-weight:900;line-height:1">6 h</p>
+<h3 style="font-size:32px;font-weight:700">一次 opencode 运行</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">--agent-timeout-hours，超时杀掉整棵进程树</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;border-top:4px solid #14213D;padding:32px 0 0 0">
+<p style="font-size:120px;font-weight:900;line-height:1">45 min</p>
+<h3 style="font-size:32px;font-weight:700">一条验收命令</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">--command-timeout-minutes，超时即停</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;border-top:4px solid #B5541A;padding:32px 0 0 0">
+<p style="font-size:120px;font-weight:900;line-height:1;color:#B5541A">10 min</p>
+<h3 style="font-size:32px;font-weight:700">看门狗</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">10 分钟内进程树 CPU 涨不到 10 秒，判定卡死并杀掉</p>
+</div>
+</div>
+<p style="font-size:28px;line-height:1.5;color:#4A5568">专治 pnpm 安装挂起、测试死锁。被杀的命令对 agent 来说就是一次失败，它得自己处理。</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 08</p>
+<aside>看门狗监控 agent 启动的每个 shell 和每条验收命令，按整棵进程树（包括已退出的子进程）的 CPU 时间算。--standalone 让 OpenCode 服务和它启动的命令都留在被监控的进程树里。Ctrl+C 会停掉 opencode 和它启动的所有进程。</aside>
+</section>
+<section class="slide" id="auto" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">run-milestones-auto</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">失败了，先让 Claude Code 修一遍</h2>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:24px">
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-top:6px solid #2F6DB5;border-radius:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:32px;font-weight:600;color:#2F6DB5">accept</p>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">只是环境问题、文件没变：重新验收后提交</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-top:6px solid #2F6DB5;border-radius:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:32px;font-weight:600;color:#2F6DB5">review</p>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">Claude 改了代码：清掉 STATUS，交给 reviewer 重新审查</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-top:6px solid #2F6DB5;border-radius:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:32px;font-weight:600;color:#2F6DB5">resume</p>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">实现没做完：清掉 STATUS，继续实现</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:32px;border:1px solid #E2DED3;border-top:6px solid #B5541A;border-radius:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:32px;font-weight:600;color:#B5541A">give-up</p>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">修不了：邮件写清根因和你要做什么</p>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+<div style="display:flex;flex-direction:row;gap:20px;align-items:start">
+<svg width="44" height="44" viewBox="0 0 24 24" style="flex:none" fill="none" stroke="#14213D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l2.4 1.8 3-.2.9 2.9 2.5 1.7-1 2.8 1 2.8-2.5 1.7-.9 2.9-3-.2L12 22l-2.4-1.8-3 .2-.9-2.9-2.5-1.7 1-2.8-1-2.8 2.5-1.7.9-2.9 3 .2z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">成功只看 git：</b>范围内每个 STATUS 在 HEAD 里是 APPROVED，且 HEAD 已推送</p>
+</div>
+<div style="display:flex;flex-direction:row;gap:20px;align-items:start">
+<svg width="44" height="44" viewBox="0 0 24 24" style="flex:none" fill="none" stroke="#14213D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v1"/><path d="M16 4a4 4 0 0 1 0 8"/><path d="M22 21v-1a6 6 0 0 0-4-5.6"/></svg>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">没修好可接手：</b>用 Remote Control 打开那个 Claude 会话，电脑或手机上都能继续</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 09</p>
+<aside>同一套 Claude 调用和会话接管现在也用在 refine-plan 上。每个里程碑最多 --fix-rounds 轮（默认 2），后一轮续用同一个 Claude 会话。Claude 从不提交或推送；如果 Claude 那轮里工作区变了，accept 会被降级成 review，保证没有未经审查的改动进入提交。</aside>
+</section>
+<section class="slide" id="refinerun" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">refine-and-run · 新增</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">写完初版 plan，一条命令跑到底</h2>
+</div>
+<div style="display:flex;flex-direction:row;align-items:stretch;gap:24px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:56px;font-weight:600;color:#B5541A;line-height:1.1">01</p>
+<h3 style="font-size:34px;font-weight:700">评审全部 plan</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">选中的里程碑交给一次 refine-plan --only …，逐个评审</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none;align-self:center" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:56px;font-weight:600;color:#B5541A;line-height:1.1">02</p>
+<h3 style="font-size:34px;font-weight:700">逐个提交 plan</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">只提交评审时的版本：docs(M35): 完善 plan：…</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none;align-self:center" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#0F1B2D;padding:36px;border-radius:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:56px;font-weight:600;color:#F2A65A;line-height:1.1">03</p>
+<h3 style="font-size:34px;font-weight:700;color:#F4F2EC">全部就绪才写代码</h3>
+<p style="font-size:26px;line-height:1.5;color:#BFC8D6">同样的选择跑 run-milestones-auto：实现、审查、验收、提交、推送</p>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px 48px">
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">有 plan 需要你：</b>其余照常评审、提交，但一行代码都不写</p>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">重跑接着做：</b>已实现的跳过，已通过且没改过的 plan 不再评审</p>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">开始前就拒绝：</b>在 master/main 上，或范围外有未提交改动</p>
+<p style="font-size:28px;line-height:1.5;color:#4A5568"><b style="color:#14213D">写代码前再查：</b>共用文档被改、之前的通过失效时停下</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 10</p>
+<aside>用法和其他命令一样：refine-and-run specs/35-foo，或 --only 35,36、--from 35 --to 37。评审全部通过时 refine-plan 不发邮件，run-milestones-auto 照常发每次结果的邮件。评审之后又改过的 plan（比如在接管会话里改的）不提交，下次重新评审。--skip-refine 跳过评审直接实现；--allow-main、--allow-dirty 放开开始前的检查。退出码：0 全部完成；plan 需要你时沿用 refine-plan 的 1/3/4；实现失败是 1。</aside>
+</section>
+<section class="slide" id="gates" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;font-weight:600;color:#B5541A">run-gated-stages</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">阶段之间，以攻击者的眼光再看一遍</h2>
+</div>
+<div style="display:flex;flex-direction:row;align-items:stretch;gap:24px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-size:26px;font-weight:700;color:#B5541A">第 1 步</p>
+<h3 style="font-size:34px;font-weight:700">评审并修复</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">claude -p 按流水线的检查清单审这一阶段的 diff，修掉 high / medium 问题</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none;align-self:center" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-size:26px;font-weight:700;color:#B5541A">第 2 步</p>
+<h3 style="font-size:34px;font-weight:700">验收后提交</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">脚本用这阶段的验收命令验证 Claude 的改动，再提交、推送</p>
+</div>
+<svg class="conn" width="48" height="24" viewBox="0 0 48 24" style="flex:none;align-self:center" fill="none" stroke="#B5541A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="12" x2="46" y2="12"/><path d="M46 12 L34 4 M46 12 L34 20"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFEFA;padding:36px;border:1px solid #E2DED3;border-radius:16px">
+<p style="font-size:26px;font-weight:700;color:#B5541A">第 3 步</p>
+<h3 style="font-size:34px;font-weight:700">全新一轮</h3>
+<p style="font-size:26px;line-height:1.5;color:#4A5568">新的 Claude 会话、不知道之前修了什么，直到找不出 low 以上的问题</p>
+</div>
+</div>
+<p style="font-size:28px;line-height:1.5;color:#4A5568">阶段、检查清单、收尾检查都写在流水线文件里；通过的安全门按 HEAD 记住，重跑不会重复评审。</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 11</p>
+<aside>每个阶段就是一次 run-milestones-auto --only 范围。最多 --gate-rounds 轮（默认 3），超过就失败，最后一个会话可以用 claude --resume 接手。阶段还可以配收尾检查：启动开发服务器，跑一个脚本，再停掉服务器。</aside>
+</section>
+<section class="slide" id="principle" data-transition="fade" style="background:#0F1B2D;color:#F4F2EC;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;justify-content:center;gap:72px">
+<div style="display:flex;flex-direction:column;gap:24px">
+<p style="font-size:28px;font-weight:700;color:#F2A65A;letter-spacing:2px">贯穿始终的一条原则</p>
+<h1 style="font-size:104px;font-weight:900;line-height:1.15">不信 agent 怎么说，<br>只信脚本自己看到的</h1>
+</div>
+<div style="display:flex;flex-direction:row;gap:48px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:2px solid #3A4A63;padding:28px 0 0 0">
+<h3 style="font-size:32px;font-weight:700;color:#F2A65A">验收自己跑</h3>
+<p style="font-size:26px;line-height:1.5;color:#BFC8D6">agent 写了 APPROVED，脚本仍会重跑每条验收命令；plan 只提交评审过的版本</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:2px solid #3A4A63;padding:28px 0 0 0">
+<h3 style="font-size:32px;font-weight:700;color:#F2A65A">结果看 git</h3>
+<p style="font-size:26px;line-height:1.5;color:#BFC8D6">成功与否读 HEAD 和上游，不读 Claude 的总结</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:2px solid #3A4A63;padding:28px 0 0 0">
+<h3 style="font-size:32px;font-weight:700;color:#F2A65A">提交由脚本做</h3>
+<p style="font-size:26px;line-height:1.5;color:#BFC8D6">agent 和 Claude 都不提交、不推送；受保护的文档谁都不能改</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 12</p>
+<aside>这是整套工具的核心思想。还有：邮件授权码只交给发信模块，不进环境变量，opencode 和 Claude 都读不到；specs/**/plan.md 和 00-conventions.md 总是受保护。</aside>
+</section>
+<section class="slide" id="onboard" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">接入一个仓库</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">装一次，处处可用</h2>
+</div>
+<div style="display:flex;flex-direction:column;gap:0">
+<div style="display:flex;flex-direction:row;align-items:center;gap:40px;padding:22px 0;border-top:1px solid #D6D1C4">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:36px;font-weight:600;color:#B5541A;width:72px">1</p>
+<p style="font-size:30px;width:420px;font-weight:700">安装全局命令</p>
+<p style="flex:1;font-size:28px;color:#4A5568">npm link；零依赖，需要 Node 22+、opencode v2，Claude Code 可选</p>
+</div>
+<div style="display:flex;flex-direction:row;align-items:center;gap:40px;padding:22px 0;border-top:1px solid #D6D1C4">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:36px;font-weight:600;color:#B5541A;width:72px">2</p>
+<p style="font-size:30px;width:420px;font-weight:700">复制 .opencode/</p>
+<p style="flex:1;font-size:28px;color:#4A5568">把 examples/.opencode 复制到仓库根，改权限、必读文档、model</p>
+</div>
+<div style="display:flex;flex-direction:row;align-items:center;gap:40px;padding:22px 0;border-top:1px solid #D6D1C4">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:36px;font-weight:600;color:#B5541A;width:72px">3</p>
+<p style="font-size:30px;width:420px;font-weight:700">写 workflows.json</p>
+<p style="flex:1;font-size:28px;color:#4A5568">可选：name、requiredEnv、protectedDocs、machineNotes</p>
+</div>
+<div style="display:flex;flex-direction:row;align-items:center;gap:40px;padding:22px 0;border-top:1px solid #D6D1C4">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:36px;font-weight:600;color:#B5541A;width:72px">4</p>
+<p style="font-size:30px;width:420px;font-weight:700">建规格目录</p>
+<p style="flex:1;font-size:28px;color:#4A5568">specs/00-conventions.md + specs/NN-名字/plan.md，带「## 验收命令」</p>
+</div>
+<div style="display:flex;flex-direction:row;align-items:center;gap:40px;padding:22px 0;border-top:1px solid #D6D1C4;border-bottom:1px solid #D6D1C4">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:36px;font-weight:600;color:#B5541A;width:72px">5</p>
+<p style="font-size:30px;width:420px;font-weight:700">配邮件（可选）</p>
+<p style="flex:1;font-size:28px;color:#4A5568">~/.opencode-workflows/notify.env，放在所有仓库之外</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 13</p>
+<aside>.gitignore 里加上 .milestone-logs/ 和 .plan-refine-logs/。每对 *-fallback.md 要和主 agent 保持一致，只有 description 和 model 不同。需求文档可以放在 docs/requirements/，plan 引用后评审会按覆盖的条目查漏。更新只需在工具目录 git pull。</aside>
+</section>
+<section class="slide" id="usage" data-transition="fade" style="background:#F6F5F0;color:#14213D;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-size:28px;font-weight:700;color:#B5541A;letter-spacing:2px">日常用法</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.15">晚上敲一行，早上看邮件</h2>
+</div>
+<div style="display:flex;flex-direction:column;gap:10px;background:#0F1B2D;padding:40px 56px;border-radius:16px;font-family:'JetBrains Mono', 'Courier New', monospace">
+<p style="font-size:28px;color:#7F8CA3"># 一条命令：评审全部 plan → 提交 plan → 实现 → 推送</p>
+<p style="font-size:30px;color:#F2A65A">refine-and-run --from 35 --to 37</p>
+<p style="font-size:28px;color:#7F8CA3;padding:20px 0 0 0"># 也可以分开跑</p>
+<p style="font-size:30px;color:#F4F2EC">refine-plan --only 35,36 --max-rounds 3</p>
+<p style="font-size:30px;color:#F4F2EC">run-milestones-auto --from 35 --to 37</p>
+<p style="font-size:28px;color:#7F8CA3;padding:20px 0 0 0"># 分阶段、带安全门</p>
+<p style="font-size:30px;color:#F4F2EC">run-gated-stages --pipeline oauth</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#7A8291">opencode-workflows · 14</p>
+<aside>先看要做什么可以加 --dry-run。在 opencode 交互界面里，同样的流程是 /refine-plan 和 /implement-plan。命令在仓库的任意子目录都能用。每个命令都有 --help。测试不访问网络、不发邮件、不需要 opencode：用一个假的 opencode 跑，npm test 即可。</aside>
+</section>
+<section class="slide" id="closing" data-transition="fade" style="background:#0F1B2D;color:#F4F2EC;font-family:'Noto Sans SC', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:center;gap:40px">
+<h1 style="font-size:112px;font-weight:900;line-height:1.15">你写 plan，<br>它交付提交。</h1>
+<p style="font-size:36px;line-height:1.5;color:#BFC8D6;width:1300px">审查有人做，验收自己跑，卡住会被杀，失败有人修，结果发到邮箱。</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:30px;color:#F2A65A">gitee.com/Thyiad/opencode-workflows</p>
+<aside>结束。欢迎提问。</aside>
+</section>
+</div>
+<div id="notes"></div>
+<div id="counter"></div>
+<script>
+  const slides = [...document.querySelectorAll('.slide')]
+  const stage = document.getElementById('stage'), notes = document.getElementById('notes'), counter = document.getElementById('counter')
+  let i = Math.min(Math.max(parseInt(location.hash.slice(1)) - 1 || 0, 0), slides.length - 1)
+  function fit() {
+    const k = Math.min(innerWidth / 1920, innerHeight / 1080)
+    stage.style.transform = `scale(${k}) translate(-50%, -50%)`
+  }
+  function show(n) {
+    i = Math.min(Math.max(n, 0), slides.length - 1)
+    slides.forEach((s, j) => s.classList.toggle('active', j === i))
+    const aside = slides[i].querySelector('aside')
+    notes.textContent = aside ? aside.textContent : ''
+    counter.textContent = `${i + 1} / ${slides.length}`
+    history.replaceState(null, '', '#' + (i + 1))
+  }
+  addEventListener('resize', fit)
+  addEventListener('keydown', e => {
+    if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(i + 1) }
+    else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); show(i - 1) }
+    else if (e.key === 'Home') show(0)
+    else if (e.key === 'End') show(slides.length - 1)
+    else if (e.key === 'n' || e.key === 'N') notes.classList.toggle('show')
+    else if (e.key === 'f' || e.key === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()
+  })
+  addEventListener('click', e => { if (!notes.contains(e.target)) show(e.clientX < innerWidth / 3 ? i - 1 : i + 1) })
+  fit(); show(i)
+</script>
+</body>
+</html>
