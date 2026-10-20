@@ -648,6 +648,8 @@ test('milestone commit subjects pass commitlint\'s subject-case: no upper-case f
   assert.equal(commitHeader({ number: '01', title: 'M01：OAuth 客户端学校范围' }), 'feat(M01): oauth 客户端学校范围')
   assert.equal(commitHeader({ number: '25', title: 'M25：OPOC 实现标准 OAuth 2.0', cross: true }), 'feat: opoc 实现标准 OAuth 2.0')
   assert.equal(commitHeader({ number: '07', title: '专项：统计接口' }), 'feat(M07): 专项：统计接口')
+  assert.equal(commitHeader({ number: '05', title: 'M05：侧导布局重构', scope: 'asset' }), 'feat(asset): 侧导布局重构')
+  assert.equal(commitHeader({ number: '04', title: 'M04：OAuth SDK', cross: true, scope: 'client' }), 'feat(client): oauth SDK')
   for (const title of ['M01：OAuth 客户端学校范围', 'M12：Admin UI', 'M3: Plain title']) {
     assert.doesNotMatch(commitHeader({ number: '01', title }).replace(/^[^:]+: /u, ''), /^[A-Z]/u, title)
   }

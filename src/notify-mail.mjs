@@ -9,9 +9,7 @@
 // attachments, one text/plain UTF-8 body (base64).
 //
 // Settings live OUTSIDE every repository, in ~/.opencode-workflows/notify.env
-// (%USERPROFILE%\.opencode-workflows\notify.env on Windows; the older
-// ~/.qiwi-milestones/notify.env is still read when the new one does not
-// exist), as KEY=VALUE lines:
+// (%USERPROFILE%\.opencode-workflows\notify.env on Windows), as KEY=VALUE lines:
 //
 //   SMTP_HOST=smtp.qq.com        optional, default smtp.qq.com
 //   SMTP_PORT=465                optional, default 465 (implicit TLS)
@@ -35,9 +33,7 @@ import { connect as tlsConnect } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { isMain } from './config.mjs'
 
-const CONFIG_FILE = join(homedir(), '.opencode-workflows', 'notify.env')
-const LEGACY_CONFIG_FILE = join(homedir(), '.qiwi-milestones', 'notify.env')
-export const DEFAULT_CONFIG_FILE = existsSync(CONFIG_FILE) || !existsSync(LEGACY_CONFIG_FILE) ? CONFIG_FILE : LEGACY_CONFIG_FILE
+export const DEFAULT_CONFIG_FILE = join(homedir(), '.opencode-workflows', 'notify.env')
 
 const ADDRESS = /^[^\s<>@,;"]+@[^\s<>@,;"]+$/u
 

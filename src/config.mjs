@@ -8,6 +8,7 @@
 //
 //   {
 //     "name": "HARNESS",                  // mail tag and sender name; default: the directory name
+//     "commitScope": "asset",             // optional conventional-commit scope required by this repository
 //     "requiredEnv": {                    // variables a milestone run needs, with a hint for each
 //       "HARNESS_TEST_MONGODB_URI": "本机 MongoDB 的管理员连接串，见 specs/00-conventions.md 3.2"
 //     },
@@ -41,6 +42,9 @@ export function loadConfig(repo) {
   }
   const problems = []
   if (raw.name !== undefined && (typeof raw.name !== 'string' || raw.name.trim() === '')) problems.push('name 必须是非空字符串')
+  if (raw.commitScope !== undefined && (typeof raw.commitScope !== 'string' || !/^[a-z0-9][a-z0-9_./-]*$/u.test(raw.commitScope))) {
+    problems.push('commitScope 必须是小写字母、数字、下划线、点、斜杠或连字符组成的非空 scope，且以字母或数字开头')
+  }
   if (raw.requiredEnv !== undefined && (raw.requiredEnv === null || typeof raw.requiredEnv !== 'object' || Array.isArray(raw.requiredEnv)
     || !Object.values(raw.requiredEnv).every(hint => typeof hint === 'string'))) problems.push('requiredEnv 必须是 { 变量名: 说明 }')
   for (const key of ['protectedDocs', 'machineNotes']) if (raw[key] !== undefined && !STRING_LIST(raw[key])) problems.push(`${key} 必须是字符串数组`)
@@ -49,6 +53,7 @@ export function loadConfig(repo) {
   return {
     file,
     name: raw.name ?? basename(repo),
+    commitScope: raw.commitScope ?? null,
     requiredEnv: raw.requiredEnv ?? {},
     protectedDocs: raw.protectedDocs ?? [],
     machineNotes: raw.machineNotes ?? [],
