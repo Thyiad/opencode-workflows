@@ -96,7 +96,7 @@ export const USAGE = `用法：run-milestones-auto [驱动脚本的参数] [本�
   run-milestones-auto --only 23,24
   run-milestones-auto --from 23 --to 26 --fix-rounds 1
 
-邮件配置放在所有仓库之外（Windows：%USERPROFILE%\\.opencode-workflows\\notify.env；旧位置 .qiwi-milestones 也认），一行一个 KEY=VALUE：
+邮件配置放在所有仓库之外（Windows：%USERPROFILE%\\.opencode-workflows\\notify.env），一行一个 KEY=VALUE：
   SMTP_USER=<QQ 号>@qq.com
   SMTP_PASS=<QQ 邮箱的授权码，不是 QQ 密码>
   MAIL_TO=<收件地址>             可选，默认同 SMTP_USER；多个用逗号分隔

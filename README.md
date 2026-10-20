@@ -130,7 +130,7 @@ plan-editor（DeepSeek）调用只读的 plan-reviewer（GPT）评审 plan，按
 
 ## 邮件通知
 
-配置放在所有仓库之外：`~/.opencode-workflows/notify.env`（Windows：`%USERPROFILE%\.opencode-workflows\notify.env`；旧位置 `~/.qiwi-milestones/notify.env` 在新文件不存在时也会读）。没有这个文件时一切照常，只是不发邮件。一行一个 `KEY=VALUE`：
+配置放在所有仓库之外：`~/.opencode-workflows/notify.env`（Windows：`%USERPROFILE%\.opencode-workflows\notify.env`）。没有这个文件时一切照常，只是不发邮件。一行一个 `KEY=VALUE`：
 
 ```ini
 SMTP_USER=<QQ 号>@qq.com
