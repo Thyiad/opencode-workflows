@@ -52,6 +52,7 @@ refine-plan --help
    | 字段 | 含义 | 默认 |
    |---|---|---|
    | `name` | 邮件标题里的标签、发件人名称 | 仓库目录名 |
+   | `commitScope` | 里程碑提交使用的 scope，例如 `asset`，生成 `feat(asset): …`；跨仓库提交使用目标仓库自己的配置 | 本仓库用 `MNN`，跨仓库不带 scope |
    | `requiredEnv` | 跑里程碑前必须设置的环境变量：`{ "变量名": "说明" }` | 无 |
    | `protectedDocs` | 无人值守的 Claude 修复和安全评审不许改的文档（另外总是保护 `specs/**/plan.md`、`specs/00-conventions.md`） | 无 |
    | `machineNotes` | 告诉无人值守的 Claude 的本机情况（已知的环境问题和处理办法） | 无 |
@@ -129,7 +130,7 @@ plan-editor（DeepSeek）调用只读的 plan-reviewer（GPT）评审 plan，按
 
 ## 邮件通知
 
-配置放在所有仓库之外：`~/.opencode-workflows/notify.env`（Windows：`%USERPROFILE%\.opencode-workflows\notify.env`；旧位置 `~/.qiwi-milestones/notify.env` 在新文件不存在时也会读）。没有这个文件时一切照常，只是不发邮件。一行一个 `KEY=VALUE`：
+配置放在所有仓库之外：`~/.opencode-workflows/notify.env`（Windows：`%USERPROFILE%\.opencode-workflows\notify.env`）。没有这个文件时一切照常，只是不发邮件。一行一个 `KEY=VALUE`：
 
 ```ini
 SMTP_USER=<QQ 号>@qq.com

@@ -450,12 +450,13 @@ export function readMeta(runDir) {
   return JSON.parse(readFileSync(file, 'utf8'))
 }
 
-// The record directories `--start` made since `since`, newest first.
-export function runDirsSince(spec, since, cwd = root) {
+// The record directories `--start` made since `since`, newest first. Existing
+// directory names can be excluded to keep rapid retries in the same second separate.
+export function runDirsSince(spec, since, cwd = root, excluded = new Set()) {
   const dir = join(cwd, LOGS)
   if (!existsSync(dir)) return []
   return readdirSync(dir)
-    .filter(name => name.startsWith(`${basename(spec)}-`) && existsSync(join(dir, name, 'meta.json')))
+    .filter(name => !excluded.has(name) && name.startsWith(`${basename(spec)}-`) && existsSync(join(dir, name, 'meta.json')))
     .map(name => ({ dir: join(dir, name), meta: readMeta(join(dir, name)) }))
     .filter(item => item.meta.spec === spec && new Date(item.meta.startedAt) >= since)
     .sort((left, right) => right.meta.startedAt.localeCompare(left.meta.startedAt))
@@ -892,9 +893,9 @@ async function refineOnce(options, prepared) {
   const { repo, spec, shown, documents, editor, models, commandFile, title } = prepared
   process.stdout.write(`${scopeLines(options, prepared).join('\n')}\n`)
   const opencode = process.env.OPENCODE_BIN || 'opencode'
-  // Whole seconds: meta.json's startedAt from --start must not sort before this.
-  const started = new Date(Math.floor(Date.now() / 1000) * 1000)
+  const started = new Date()
   mkdirSync(join(repo, LOGS), { recursive: true })
+  const previousRunNames = new Set(readdirSync(join(repo, LOGS)))
   const logFile = join(repo, LOGS, `${basename(spec)}-${started.toISOString().replace(/[:.]/gu, '-')}.runner.log`)
   const inRepo = path => displaySpec(repo, repoPath(path, repo))
   process.stdout.write(`运行日志：${inRepo(logFile)}\n\n`)
@@ -911,7 +912,7 @@ async function refineOnce(options, prepared) {
 
   // What only this runner can see; the rest is the final check of --finish,
   // which runs again here on the records whatever the agent did.
-  const runDirs = runDirsSince(spec, started, repo)
+  const runDirs = runDirsSince(spec, started, repo, previousRunNames)
   const problems = []
   if (agent.timedOut) problems.push(`opencode 超过 ${options.agentTimeoutHours} 小时没有结束，已终止`)
   else if (agent.code !== 0) problems.push(`opencode 以退出码 ${agent.code} 结束`)

@@ -281,6 +281,22 @@ function startedRepo({ maxRounds = 2 } = {}) {
   return { dir, runDir, round }
 }
 
+test('record selection excludes previous runs in the same second but keeps every new start', () => {
+  const { dir, runDir } = startedRepo()
+  try {
+    const since = new Date('2026-10-05T01:00:00Z')
+    const previousNames = new Set([basename(runDir)])
+    const start = milliseconds => startRun({ spec: 'specs/35-foo', documents: ['specs/35-foo/plan.md'], title: 'M99：示例',
+      models: MODELS, maxRounds: 2, cwd: dir, now: new Date(since.getTime() + milliseconds) })
+    const second = start(250)
+    assert.deepEqual(runDirsSince('specs/35-foo', since, dir, previousNames), [second])
+    const third = start(500)
+    assert.deepEqual(runDirsSince('specs/35-foo', since, dir, previousNames), [third, second])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('the command steps: --start, --check per round, --finish writes the report from the records', () => {
   const { dir, runDir, round } = startedRepo()
   try {

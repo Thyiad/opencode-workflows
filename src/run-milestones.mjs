@@ -471,9 +471,11 @@ export function opencodeVersionSupported(output) {
 // repositories that enforce conventional commits reject a subject starting with
 // an upper-case letter (commitlint subject-case: "OAuth …", "OPOC …", "M01：…").
 // A cross-repository milestone's number belongs to this repository, so the
-// target's commit has no scope.
-export function commitHeader({ number, title, cross = false }) {
+// target's commit has no scope. An explicit scope from the target repository's
+// configuration takes precedence over both defaults.
+export function commitHeader({ number, title, cross = false, scope = null }) {
   const subject = title.replace(/^M\d+[：:]\s*/u, '').replace(/^[A-Z][A-Za-z0-9]*/u, word => word.toLowerCase())
+  if (scope) return `feat(${scope}): ${subject}`
   return cross ? `feat: ${subject}` : `feat(M${number}): ${subject}`
 }
 
@@ -1045,13 +1047,13 @@ async function main() {
     process.stdout.write(`\n=== ${title} ===\n日志：${logFile}\n`)
 
     const { target } = milestone
+    let targetConfig = config
     if (target.cross) {
       if (!existsSync(join(target.cwd, target.spec, 'plan.md'))) fail(`找不到跨仓库规格：${join(target.cwd, target.spec, 'plan.md')}`, milestone, false)
       const targetBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target.cwd }).trim()
       if (PROTECTED_BRANCHES.includes(targetBranch) && !options.allowMain) {
         fail(`${target.cwd} 当前在 ${targetBranch} 分支。请先切到开发分支，或加 --allow-main。`, milestone, false)
       }
-      let targetConfig
       try { targetConfig = loadConfig(target.cwd) } catch (error) { fail(error.message, milestone, false) }
       const targetMissing = missingEnv(targetConfig)
       if (targetMissing.length > 0) {
@@ -1121,7 +1123,7 @@ async function main() {
 
     git(['add', '-A', '--', '.'], { cwd: target.cwd })
     const timing = `耗时：实现与审查 ${formatDuration(agentMs)}，验收 ${formatDuration(acceptanceMs)}，合计 ${formatDuration(Date.now() - started)}。`
-    const header = commitHeader({ number: milestone.number, title, cross: target.cross })
+    const header = commitHeader({ number: milestone.number, title, cross: target.cross, scope: targetConfig.commitScope })
     const message = `${header}\n\n按 ${target.spec}/plan.md 实现，经 opencode 实现与审查工作流完成并通过验收命令。\n${timing}`
     git(['commit', '-q', '-m', message], { cwd: target.cwd })
     finish('committed')
