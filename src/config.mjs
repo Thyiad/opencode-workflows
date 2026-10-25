@@ -27,7 +27,7 @@ export const CONFIG_FILE = join('.opencode', 'workflows.json')
 export function repoRootOf(dir = process.cwd()) {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8' })
   const top = result.status === 0 ? result.stdout.trim() : resolve(dir)
-  try { return realpathSync(top) } catch { return top }
+  try { return realpathSync.native(top) } catch { return top }
 }
 
 const STRING_LIST = value => Array.isArray(value) && value.every(item => typeof item === 'string')

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isMain, loadConfig, missingEnv, repoRootOf } from '../src/config.mjs'
@@ -12,7 +12,7 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'workflows-config-'))
   execFileSync('git', ['init', '-q'], { cwd: dir })
-  return realpathSync(dir)
+  return realpathSync.native(dir)
 }
 
 test('the repository is the git top level of the current directory', () => {
@@ -29,7 +29,7 @@ test('settings: defaults without a file, values and validation with one', () => 
   const repo = tempRepo()
   try {
     const defaults = loadConfig(repo)
-    assert.equal(defaults.name, repo.split('/').at(-1))
+    assert.equal(defaults.name, basename(repo))
     assert.deepEqual([defaults.requiredEnv, defaults.protectedDocs, defaults.machineNotes], [{}, [], []])
     assert.equal(defaults.pipelinesDir, join(repo, 'scripts', 'pipelines'))
 

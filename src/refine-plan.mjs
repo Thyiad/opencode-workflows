@@ -81,7 +81,7 @@ import { isMain, loadConfig, repoRootOf } from './config.mjs'
 import { DEFAULT_CONFIG_FILE, loadMailConfig, sendMail } from './notify-mail.mjs'
 import {
   MILESTONE_NUMBER, MIN_OPENCODE_VERSION, acceptanceCommands, crossRepoTarget, expandCommand, formatDuration, installInterruptHandler, listMilestones,
-  milestoneTitle, opencodeVersionSupported, parseNumberSpec, processTable, run, selectMilestones, splitFrontmatter, trackRoot, windowsShellCommand,
+  milestoneTitle, opencodeVersionSupported, parseNumberSpec, readProcessTable, run, selectMilestones, splitFrontmatter, stoppedNote, trackRoot, windowsShellCommand,
 } from './run-milestones.mjs'
 
 // The current directory's repository: paths are shown relative to it.
@@ -220,7 +220,7 @@ export function documentsInScope(spec, also = []) {
 function gitTop(dir) {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8' })
   if (result.status !== 0) throw new Error(`${dir} 不在 git 仓库里`)
-  return realpathSync(result.stdout.trim())
+  return realpathSync.native(result.stdout.trim())
 }
 
 // The repository and the spec directory in it for a directory given on the
@@ -229,7 +229,7 @@ function gitTop(dir) {
 export function locate(path, cwd = process.cwd()) {
   const dir = resolve(cwd, path)
   if (!existsSync(join(dir, 'plan.md'))) throw new Error(`找不到 ${path}/plan.md`)
-  const real = realpathSync(dir)
+  const real = realpathSync.native(dir)
   const repo = gitTop(real)
   const spec = repoPath(real, repo)
   if (!spec) throw new Error(`${path} 是仓库根目录，不是规格目录`)
@@ -238,12 +238,12 @@ export function locate(path, cwd = process.cwd()) {
   if (!cross) return { repo, spec, placeholder: null }
   if (!existsSync(join(cross.repo, cross.spec, 'plan.md'))) throw new Error(`占位 ${spec} 指向的规格不存在：${join(cross.repo, cross.spec, 'plan.md')}`)
   const target = gitTop(cross.repo)
-  return { repo: target, spec: repoPath(realpathSync(join(cross.repo, cross.spec)), target), placeholder: spec }
+  return { repo: target, spec: repoPath(realpathSync.native(join(cross.repo, cross.spec)), target), placeholder: spec }
 }
 
 // How to name a spec of `repo` from this repository: "specs/35-foo" here, "../OPOC/specs/x" elsewhere.
 export function displaySpec(repo, spec) {
-  return repo === realpathSync(root) ? spec : relative(realpathSync(root), join(repo, spec)).split(sep).join('/')
+  return repo === realpathSync.native(root) ? spec : relative(realpathSync.native(root), join(repo, spec)).split(sep).join('/')
 }
 
 // The numbered specs this repository's specs/ holds for --only/--from/--to, in
@@ -876,7 +876,7 @@ function scopeLines(options, prepared) {
   const { repo, shown, placeholder, documents, editor, models, title, check } = prepared
   return [
     `规格：${title}（${shown}${placeholder ? `，占位 ${placeholder}` : ''}）`,
-    ...(repo === realpathSync(root) ? [] : [`仓库：${repo}（用它自己的 .opencode）`]),
+    ...(repo === realpathSync.native(root) ? [] : [`仓库：${repo}（用它自己的 .opencode）`]),
     '范围内的文档：',
     ...documents.map(document => `  ${document}`),
     `opencode：/${COMMAND}，${editor}（${models[editor]}）调用 ${REVIEWER}（${models[REVIEWER]}；不可用时 ${FALLBACK_REVIEWER}，${models[FALLBACK_REVIEWER]}）`,
@@ -940,7 +940,7 @@ async function refineOnce(options, prepared) {
     logFile: inRepo(logFile), durationMs: Date.now() - started, rounds: finished?.rounds ?? [], decisions: finished?.decisions ?? [],
     // For Claude, who works in the plan's repository.
     paths: { logFile, runDir: runDirs[0] ?? null, reportFile: finished ? join(repo, spec, REPORT_FILE) : null },
-    diffCommand: repo === realpathSync(root) ? `git diff -- ${spec}` : `git -C ${relative(realpathSync(root), repo).split(sep).join('/')} diff -- ${spec}`,
+    diffCommand: repo === realpathSync.native(root) ? `git diff -- ${spec}` : `git -C ${relative(realpathSync.native(root), repo).split(sep).join('/')} diff -- ${spec}`,
   }
 }
 
@@ -995,7 +995,7 @@ async function main() {
   if (options.finish) {
     let result
     try {
-      const runDir = realpathSync(resolve(options.finish))
+      const runDir = realpathSync.native(resolve(options.finish))
       result = finishRun(runDir, { cwd: gitTop(runDir) })
     } catch (error) { fail(error.message) }
     process.stdout.write([
@@ -1009,7 +1009,7 @@ async function main() {
   if (options.check) {
     let result
     try {
-      const runDir = realpathSync(resolve(options.check))
+      const runDir = realpathSync.native(resolve(options.check))
       result = checkRound(runDir, gitTop(runDir))
     } catch (error) { fail(error.message) }
     process.stdout.write(`第 ${result.round} 轮评审前的文档版本已记录。\n验收命令：${result.check.text}\n`)
@@ -1065,7 +1065,9 @@ async function main() {
     process.platform === 'win32' ? [] : ['--version'], { encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true })
   if (version.status !== 0) fail(`找不到 opencode 命令行（${opencode}）。请先安装 opencode CLI，或用 OPENCODE_BIN 指定路径。`)
   if (!opencodeVersionSupported(version.stdout)) fail(`opencode 版本过低（${version.stdout.trim()}），需要 ${MIN_OPENCODE_VERSION.join('.')} 或更高。`)
-  try { processTable() } catch (error) { fail(`看门狗读不到进程表：${error.message}\n  请在能运行 ps 的终端里启动。`) }
+  try { await readProcessTable() } catch (error) {
+    fail(`看门狗读不到进程表：${error.message}\n  请在能运行 ${process.platform === 'win32' ? 'PowerShell 和 WMI' : 'ps'} 的终端里启动。`)
+  }
   let mailConfig = null
   try {
     mailConfig = loadMailConfig(options.notifyConfig)
@@ -1074,8 +1076,8 @@ async function main() {
     process.stderr.write(`⚠ ${error.message}。本次不发邮件。\n`)
   }
 
-  installInterruptHandler(() => {
-    process.stderr.write(`已全部结束。文档的改动保留在工作区；评审前的原文和各轮记录在 ${LOGS}/ 下这次的记录目录里。\n`)
+  installInterruptHandler(survivors => {
+    process.stderr.write(`${stoppedNote(survivors)}文档的改动保留在工作区；评审前的原文和各轮记录在 ${LOGS}/ 下这次的记录目录里。\n`)
   })
 
   // Claude settles what it can when a review needs the user; checked once, up front.

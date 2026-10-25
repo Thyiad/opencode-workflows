@@ -618,7 +618,7 @@ test('locate: a plan in another repository, and a placeholder standing for its t
     }
     mkdirSync(join(parent, 'target/specs/foo'), { recursive: true })
     writeFileSync(join(parent, 'target/specs/foo/plan.md'), PLAN)
-    const target = realpathSync(join(parent, 'target'))
+    const target = realpathSync.native(join(parent, 'target'))
     assert.deepEqual(locate('../target/specs/foo', join(parent, 'hub')), { repo: target, spec: 'specs/foo', placeholder: null })
     assert.deepEqual(locate('specs/foo/', target), { repo: target, spec: 'specs/foo', placeholder: null })
     assert.throws(() => locate('specs/missing', target), /找不到 specs\/missing\/plan\.md/u)

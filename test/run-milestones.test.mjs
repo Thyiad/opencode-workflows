@@ -344,8 +344,8 @@ test('the watchdog kills a stuck command and its separately grouped children', {
 test('Windows process table includes parent links and CPU time', {
   skip: process.platform !== 'win32',
 }, async () => {
-  const { processTable } = await import('../src/run-milestones.mjs')
-  const self = processTable().find(row => row.pid === process.pid)
+  const { readProcessTable } = await import('../src/run-milestones.mjs')
+  const self = (await readProcessTable()).find(row => row.pid === process.pid)
   assert.ok(self)
   assert.ok(self.ppid > 0)
   assert.ok(Number.isFinite(self.cpu))
@@ -366,14 +366,14 @@ test('Windows CLI launch preserves spaces in the executable path and arguments',
 test('Windows timeout kills a detached grandchild too', {
   skip: process.platform !== 'win32',
 }, async () => {
-  const { run, processTable } = await import('../src/run-milestones.mjs')
+  const { run, readProcessTable } = await import('../src/run-milestones.mjs')
   const marker = `milestone-timeout-${process.pid}-${Date.now()}`
   const command = `require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '${marker}'], { detached: true, stdio: 'ignore', windowsHide: true }); setInterval(() => {}, 1000)`
   const started = Date.now()
   const pending = run(process.execPath, ['-e', command], { timeoutMs: 6_000 })
   let foundGrandchild = false
   while (Date.now() - started < 5_000) {
-    const matching = processTable().filter(row => row.command.includes(marker))
+    const matching = (await readProcessTable()).filter(row => row.command.includes(marker))
     if (matching.length >= 2) { foundGrandchild = true; break }
     await new Promise(done => setTimeout(done, 100))
   }
@@ -382,13 +382,13 @@ test('Windows timeout kills a detached grandchild too', {
   assert.equal(result.timedOut, true)
   assert.ok(Date.now() - started < 15_000)
   await new Promise(done => setTimeout(done, 500))
-  assert.equal(processTable().some(row => row.command.includes(marker)), false)
+  assert.equal((await readProcessTable()).some(row => row.command.includes(marker)), false)
 })
 
 test('Windows watchdog detects an idle command and kills its tree', {
   skip: process.platform !== 'win32',
 }, async () => {
-  const { run, processTable } = await import('../src/run-milestones.mjs')
+  const { run, readProcessTable } = await import('../src/run-milestones.mjs')
   const marker = `milestone-stall-${process.pid}-${Date.now()}`
   const command = `require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '${marker}'], { detached: true, stdio: 'ignore', windowsHide: true }); setInterval(() => {}, 1000)`
   const started = Date.now()
@@ -400,7 +400,7 @@ test('Windows watchdog detects an idle command and kills its tree', {
   assert.notEqual(result.code, 0)
   assert.ok(Date.now() - started < 15_000)
   await new Promise(done => setTimeout(done, 500))
-  assert.equal(processTable().some(row => row.command.includes(marker)), false)
+  assert.equal((await readProcessTable()).some(row => row.command.includes(marker)), false)
 })
 
 test('Windows agent watchdog watches a command shell without timing out the agent', {
@@ -477,9 +477,114 @@ test('the watchdog tolerates a few failed process-table reads before ending the 
     stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 200, readUnits: () => { throw new Error('一直失败') } },
   })
   assert.equal(broken.timedOut, false)
-  assert.equal(broken.stalls, 1)
+  assert.equal(broken.stalls, 0)
+  assert.equal(broken.blind, 1)
   assert.notEqual(broken.code, 0)
   assert.ok(Date.now() - started < 10_000, `ended after ${PROCESS_TABLE_FAILURE_LIMIT} failed reads`)
+})
+
+test('the watchdog awaits process-table reads without overlapping them', async () => {
+  const { run } = await import('../src/run-milestones.mjs')
+  let active = 0
+  let maxActive = 0
+  let reads = 0
+  const result = await run(process.execPath, ['-e', 'setTimeout(() => {}, 250)'], {
+    watch: 'command',
+    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 10, readUnits: async () => {
+      reads += 1
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await new Promise(done => setTimeout(done, 60))
+      active -= 1
+      return []
+    } },
+  })
+  assert.equal(result.code, 0)
+  assert.ok(reads > 0)
+  assert.equal(maxActive, 1)
+})
+
+test('a table read still pending when the command ends is cancelled', async () => {
+  const { run, readProcessTable } = await import('../src/run-milestones.mjs')
+  let pending = null
+  const result = await run(process.execPath, ['-e', 'setTimeout(() => {}, 200)'], {
+    watch: 'command',
+    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 20, readUnits: (pid, watch, signal) => {
+      pending ??= signal
+      return new Promise(done => signal.addEventListener('abort', () => done([])))
+    } },
+  })
+  assert.equal(result.code, 0)
+  assert.equal(pending?.aborted, true)
+
+  const cancel = new AbortController()
+  const read = readProcessTable(undefined, cancel.signal)
+  cancel.abort()
+  await assert.rejects(read, /读取已取消/u)
+})
+
+test('a kill that leaves the command running is retried', async () => {
+  const { run, killTree } = await import('../src/run-milestones.mjs')
+  const kills = []
+  const started = Date.now()
+  const result = await run(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], {
+    watch: 'command',
+    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 50, readUnits: () => { throw new Error('一直失败') } },
+    killRetryMs: 50,
+    kill: async pid => {
+      kills.push(pid)
+      return kills.length > 1 && killTree(pid)
+    },
+  })
+  assert.equal(result.blind, 1)
+  assert.notEqual(result.code, 0)
+  assert.equal(kills.length, 2)
+  assert.ok(Date.now() - started < 15_000)
+})
+
+test('kill retries stop once the command has ended on its own', async () => {
+  const { run } = await import('../src/run-milestones.mjs')
+  const kills = []
+  const result = await run(process.execPath, ['-e', 'setTimeout(() => {}, 600)'], {
+    watch: 'command',
+    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 20, readUnits: () => { throw new Error('一直失败') } },
+    killRetryMs: 300,
+    kill: async pid => { kills.push(pid); return false },
+  })
+  assert.equal(result.code, 0)
+  const killsBeforeEnd = kills.length
+  assert.ok(killsBeforeEnd >= 1)
+  await new Promise(done => setTimeout(done, 800))
+  assert.equal(kills.length, killsBeforeEnd, 'no kill after the command ended')
+})
+
+test('stopping everything names the processes that survived', async () => {
+  const { stopTrees, stoppedNote } = await import('../src/run-milestones.mjs')
+  const written = []
+  const write = process.stderr.write
+  process.stderr.write = text => { written.push(String(text)); return true }
+  try {
+    assert.deepEqual(await stopTrees([11, 12, 13], async pid => pid !== 12), [12])
+    assert.deepEqual(await stopTrees([14], async () => true), [])
+  } finally { process.stderr.write = write }
+  assert.equal(written.length, 1)
+  assert.match(written[0], /没能结束.*12/u)
+  assert.equal(stoppedNote([12]), '其余进程已结束。')
+  assert.equal(stoppedNote([]), '已全部结束。')
+})
+
+test('a Windows answer that lists nothing or has unusable fields is not a table', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const { processTable } = await import('../src/run-milestones.mjs')
+  const powershell = stdout => () => ({ status: 0, stdout, stderr: '' })
+  assert.throws(() => processTable(powershell('[]')), /没有列出任何进程/u)
+  assert.throws(() => processTable(powershell('  ')), /没有列出任何进程/u)
+  assert.throws(() => processTable(powershell('null')), /字段无效/u)
+  assert.throws(() => processTable(powershell('[{"pid":"x","ppid":1,"cpu":0}]')), /字段无效/u)
+  assert.throws(() => processTable(powershell('[{"pid":2,"ppid":1}]')), /字段无效/u)
+  assert.throws(() => processTable(powershell('WARNING: ...')), /输出不是 JSON/u)
+  assert.deepEqual(processTable(powershell('{"pid":4,"ppid":0,"cpu":1.5,"command":null}')), [{ pid: 4, ppid: 0, cpu: 1.5, command: '' }])
 })
 
 test('--resume tells the agent the working tree is its own unfinished work', async () => {

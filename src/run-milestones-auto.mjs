@@ -56,7 +56,7 @@ import {
 } from './claude.mjs'
 import { isMain, loadConfig, repoRootOf } from './config.mjs'
 import { DEFAULT_CONFIG_FILE, loadMailConfig, sendMail } from './notify-mail.mjs'
-import { continueSelection, formatDuration, killTree, listMilestones, milestoneTitle, protectedBranch, selectMilestones, statusOf, summarizeTimings, targetOf } from './run-milestones.mjs'
+import { continueSelection, formatDuration, killTree, listMilestones, milestoneTitle, protectedBranch, selectMilestones, statusOf, stopTrees, summarizeTimings, targetOf } from './run-milestones.mjs'
 
 // The repository this run works on (the current directory's), and the runner
 // next to this file in the package.
@@ -673,7 +673,7 @@ function installInterruptHandler() {
   const handler = async signal => {
     if (handingOver) return
     if (interrupted) {
-      await Promise.all([...children.keys()].map(pid => killTree(pid)))
+      await stopTrees([...children.keys()])
       process.exit(130)
     }
     interrupted = true

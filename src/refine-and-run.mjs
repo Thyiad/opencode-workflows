@@ -320,7 +320,7 @@ export function commitReviewed({ repo, spec, hashes, number, label, cross }) {
 }
 
 // This repository and the targets of cross-repository placeholders.
-const reposOf = scope => [...new Set([realpathSync(root), ...scope.map(milestone => realpathSync(targetOf(milestone).cwd))])]
+const reposOf = scope => [...new Set([realpathSync.native(root), ...scope.map(milestone => realpathSync.native(targetOf(milestone).cwd))])]
 
 function createDeps(options, mailConfig) {
   return {
@@ -348,7 +348,7 @@ function createDeps(options, mailConfig) {
       rmSync(resultsFile, { force: true })
       return { code, records }
     },
-    commitPlan: (milestone, record) => commitReviewed({ ...record, number: milestone.number, label: milestone.rel, cross: record.repo !== realpathSync(root) }),
+    commitPlan: (milestone, record) => commitReviewed({ ...record, number: milestone.number, label: milestone.rel, cross: record.repo !== realpathSync.native(root) }),
     implement: () => runChild(autoScript, [...selectionArgs(options), ...options.autoArgs]),
     protectedBranches: scope => reposOf(scope).map(cwd => ({ cwd, branch: protectedBranch(cwd) })).filter(item => item.branch),
     // As run-milestones-auto sees it: no upstream counts as not pushed.
@@ -398,7 +398,7 @@ async function main() {
   if (options.dryRun) process.exit(dryRun(options, deps))
   // --resume/--review carry on with uncommitted work on purpose.
   if (!['--allow-dirty', '--resume', '--review'].some(flag => options.autoArgs.includes(flag))) {
-    const dirty = dirtyOutside(trackedChanges(), deps.scope(), alsoOf(options, realpathSync(root)))
+    const dirty = dirtyOutside(trackedChanges(), deps.scope(), alsoOf(options, realpathSync.native(root)))
     if (dirty.length) {
       process.stderr.write(`\n✗ 工作区有未提交的改动，实现时 run-milestones 会拒绝开始：\n${dirty.map(path => `  ${path}`).join('\n')}\n  先处理掉；确认属于本次里程碑时加 --allow-dirty。\n`)
       process.exit(1)

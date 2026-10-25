@@ -57,6 +57,11 @@
 // it. This catches the known pnpm 11.7.0 install hang and deadlocked tests
 // (for example a test that synchronously waits on a child process that talks
 // to a server inside the test process), which would otherwise wait forever.
+// The table is read asynchronously, so a slow read does not stall the agent's
+// output. On Windows, where it costs a PowerShell process and a WMI query, a
+// machine busy with a build can make that read take far longer than an idle
+// one; that is load, not a stuck command, so a read gets 90 seconds and only
+// three failed reads in a row end the command.
 //
 // Ctrl+C / SIGTERM stops opencode and every process it started, then exits.
 //
@@ -74,7 +79,7 @@
 // Requirements: the opencode CLI on PATH (or OPENCODE_BIN), and the variables
 // the repository's .opencode/workflows.json lists under requiredEnv (for a
 // cross-repository milestone, the target repository's as well).
-import { spawn, spawnSync } from 'node:child_process'
+import { execFile, spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -518,35 +523,80 @@ export function parseCpuTime(text) {
   return Number(days) * 86_400 + Number(hours) * 3_600 + Number(minutes) * 60 + Number(seconds)
 }
 
+// Win32_Process exposes parent PIDs and cumulative CPU time. The encoded
+// script is constant, so process command lines never pass through a shell.
+const WINDOWS_TABLE_SCRIPT = `$ProgressPreference = 'SilentlyContinue'
+Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,KernelModeTime,UserModeTime,CommandLine | ForEach-Object {
+  [pscustomobject]@{
+    pid = [int]$_.ProcessId
+    ppid = [int]$_.ParentProcessId
+    cpu = ([double]$_.KernelModeTime + [double]$_.UserModeTime) / 10000000
+    command = [string]$_.CommandLine
+  }
+} | ConvertTo-Json -Compress`
+
+// A cold PowerShell that loads the CIM cmdlets needs about half a second on an
+// idle machine and far longer while a build keeps every core and disk queue
+// busy: with a 15 second limit the read itself timed out (ETIMEDOUT) on a
+// healthy command. The read is the watchdog's own bookkeeping, not the command
+// under watch, so it gets a limit that load alone cannot reach.
+export const TABLE_READ_TIMEOUT_MS = 90_000
+
+function tableQuery() {
+  if (process.platform === 'win32') {
+    return ['powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_TABLE_SCRIPT, 'utf16le').toString('base64')],
+      { encoding: 'utf8', timeout: TABLE_READ_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsHide: true }]
+  }
+  return ['ps', ['-axo', 'pid=,ppid=,pgid=,time=,command='], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }]
+}
+
 // Throws when the table cannot be read: an empty answer must never pass for
 // "nothing is running", or the watchdog would stop watching (agent) or judge a
 // healthy command stuck (acceptance). `spawner` replaces spawnSync in tests.
 export function processTable(spawner = spawnSync) {
+  const [command, args, options] = tableQuery()
+  return parseProcessTable(spawner(command, args, options))
+}
+
+// The watchdog's read: it must not block the event loop (the agent's output
+// would stall with it), and WMI on a busy Windows machine can take well over
+// 15 seconds, which is load, not a stuck command. `signal` cancels the query
+// once nobody waits for it, so a pending PowerShell cannot hold the exit back.
+export async function readProcessTable(timeoutMs = TABLE_READ_TIMEOUT_MS, signal = undefined) {
+  const [command, args, options] = tableQuery()
+  const result = await new Promise(done => {
+    execFile(command, args, { ...options, timeout: timeoutMs, signal }, (error, stdout, stderr) => {
+      if (!error) return done({ status: 0, stdout, stderr })
+      if (typeof error.code === 'number') return done({ status: error.code, stdout, stderr })
+      const reason = error.name === 'AbortError' ? new Error('读取已取消')
+        : error.killed && error.code == null ? new Error(`${command} 超过 ${formatDuration(timeoutMs)} 没有返回`) : error
+      done({ status: null, stdout, stderr, error: reason })
+    })
+  })
+  return parseProcessTable(result)
+}
+
+function parseProcessTable(result) {
   if (process.platform === 'win32') {
-    // Win32_Process exposes parent PIDs and cumulative CPU time. The encoded
-    // script is constant, so process command lines never pass through a shell.
-    const script = `Get-CimInstance Win32_Process | ForEach-Object {
-      [pscustomobject]@{
-        pid = [int]$_.ProcessId
-        ppid = [int]$_.ParentProcessId
-        cpu = ([double]$_.KernelModeTime + [double]$_.UserModeTime) / 10000000
-        command = [string]$_.CommandLine
-      }
-    } | ConvertTo-Json -Compress`
-    const result = spawner('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
-    ], { encoding: 'utf8', timeout: 15_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true })
+    const fail = reason => new Error(`无法读取 Windows 进程表：${reason}`)
     if (result.error || result.status !== 0) {
-      throw new Error(`无法读取 Windows 进程表：${result.error?.message ?? result.stderr?.trim() ?? '未知错误'}`)
+      throw fail(result.error?.message ?? (result.stderr?.trim() || `powershell 以退出码 ${result.status} 结束`))
     }
     const output = result.stdout.trim()
-    if (!output) return []
-    const rows = JSON.parse(output)
-    return (Array.isArray(rows) ? rows : [rows]).map(row => ({
-      pid: Number(row.pid), ppid: Number(row.ppid), cpu: Number(row.cpu), command: row.command ?? '',
+    if (!output) throw fail('powershell 没有列出任何进程')
+    let parsed
+    try { parsed = JSON.parse(output) } catch (error) { throw fail(`输出不是 JSON（${error.message}）`) }
+    const rows = (Array.isArray(parsed) ? parsed : [parsed]).map(row => ({
+      pid: Number(row?.pid), ppid: Number(row?.ppid), cpu: Number(row?.cpu), command: typeof row?.command === 'string' ? row.command : '',
     }))
+    // Same rule as for ps: an answer that lists nothing, or rows without
+    // usable numbers, must not pass for a table.
+    if (rows.length === 0) throw fail('powershell 没有列出任何进程')
+    const bad = rows.find(row => !Number.isInteger(row.pid) || row.pid < 0 || !Number.isInteger(row.ppid) || row.ppid < 0
+      || !Number.isFinite(row.cpu) || row.cpu < 0)
+    if (bad) throw fail(`有一行的字段无效：${JSON.stringify(bad)}`)
+    return rows
   }
-  const result = spawner('ps', ['-axo', 'pid=,ppid=,pgid=,time=,command='], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
   if (result.error || result.status !== 0) {
     throw new Error(`无法读取进程表：${result.error?.message ?? (result.stderr?.trim() || `ps 以退出码 ${result.status} 结束`)}`)
   }
@@ -578,19 +628,32 @@ export function subtree(rows, rootPid) {
 }
 
 const isAlive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
-const sleep = ms => new Promise(done => setTimeout(done, ms))
+const KILL_ATTEMPTS = 3
+// Resolves early (not rejects) when `signal` aborts.
+const sleep = (ms, signal) => new Promise(done => {
+  if (signal?.aborted) return done()
+  const timer = setTimeout(done, ms)
+  signal?.addEventListener('abort', () => { clearTimeout(timer); done() }, { once: true })
+})
 
 // Kills a whole tree. The agent starts every command in its own process group,
 // so signalling one group is not enough: collect the tree by parent PID first
 // (children get re-parented once their parent dies), then signal each process.
+// Resolves true once the root is gone, false when it still runs after every attempt.
 export async function killTree(rootPid, graceMs = 10_000, readTable = processTable) {
   if (process.platform === 'win32') {
     // Windows has no Unix process groups. taskkill follows the child tree
-    // before terminating its root, including detached child processes.
-    spawnSync('taskkill.exe', ['/PID', String(rootPid), '/T', '/F'], {
-      encoding: 'utf8', timeout: graceMs, windowsHide: true,
-    })
-    return
+    // before terminating its root, including detached child processes. It can
+    // fail on a busy machine (or hang): its answer is not trusted, only
+    // whether the root is still there, and a few attempts are made.
+    for (let attempt = 0; attempt < KILL_ATTEMPTS && isAlive(rootPid); attempt += 1) {
+      await new Promise(done => execFile('taskkill.exe', ['/PID', String(rootPid), '/T', '/F'], {
+        encoding: 'utf8', timeout: graceMs, windowsHide: true,
+      }, () => done()))
+      const deadline = Date.now() + 2_000
+      while (Date.now() < deadline && isAlive(rootPid)) await sleep(200)
+    }
+    return !isAlive(rootPid)
   }
   // Without a readable process table the root and its process group are still signalled.
   let rows = []
@@ -604,7 +667,12 @@ export async function killTree(rootPid, graceMs = 10_000, readTable = processTab
   signalAll('SIGTERM')
   const deadline = Date.now() + graceMs
   while (Date.now() < deadline && pids.some(isAlive)) await sleep(200)
-  if (pids.some(isAlive)) signalAll('SIGKILL')
+  if (pids.some(isAlive)) {
+    signalAll('SIGKILL')
+    const end = Date.now() + 2_000
+    while (Date.now() < end && isAlive(rootPid)) await sleep(100)
+  }
+  return !isAlive(rootPid)
 }
 
 // A unit is one command: a shell the agent started, or an acceptance command.
@@ -695,8 +763,8 @@ export function unixAgentUnits(rows, rootPid) {
 // 'agent': each outermost tool command below the agent or standalone server
 // is one unit; the server and helpers sharing its group are not watched.
 // 'command': the whole tree of an acceptance command is one unit.
-function watchedUnits(rootPid, mode) {
-  const rows = processTable()
+async function watchedUnits(rootPid, mode, signal) {
+  const rows = await readProcessTable(TABLE_READ_TIMEOUT_MS, signal)
   if (mode === 'command') {
     return [{ pid: rootPid, command: rows.find(row => row.pid === rootPid)?.command ?? '', processes: subtree(rows, rootPid) }]
   }
@@ -716,10 +784,18 @@ export function trackRoot(child) {
   child.on('close', () => runningRoots.delete(child.pid))
 }
 
-// Resolves { code, timedOut, stalls }. `input`, when given, is written to the
-// command's stdin. `stall` is { windowMs, minCpuSeconds, pollMs?, readUnits? };
-// `readUnits(rootPid, watch)` replaces the process-table read in tests.
-export function run(command, args, { logFile, shell = false, timeoutMs, cwd = root, watch = null, stall = null, input } = {}) {
+const runEnds = new Set()
+// A kill that leaves the process running is retried this often, killRetryMs apart.
+const KILL_ROUNDS = 3
+
+// Resolves { code, timedOut, stalls, blind }. `input`, when given, is written to
+// the command's stdin. `stall` is { windowMs, minCpuSeconds, pollMs?, readUnits? };
+// `readUnits(rootPid, watch, signal)` (may return a promise) replaces the
+// process-table read in tests, `kill(pid)` replaces killTree.
+// `stalls` counts commands the watchdog ended for making no progress; `blind`
+// counts the ones it ended because it could not read the process table at all.
+export function run(command, args, { logFile, shell = false, timeoutMs, cwd = root, watch = null, stall = null, input,
+  kill = killTree, killRetryMs = 10_000 } = {}) {
   return new Promise((resolvePromise) => {
     // Unix: its own process group, so the whole group can be signalled.
     // Windows: taskkill /T follows the tree without that, and a detached child
@@ -738,38 +814,87 @@ export function run(command, args, { logFile, shell = false, timeoutMs, cwd = ro
     const note = text => { process.stderr.write(text); log?.write(text) }
     let timedOut = false
     let stalls = 0
+    let blind = 0
     const detector = watch && stall ? createStallDetector(stall) : null
     let tableFailures = 0
-    const poll = detector ? setInterval(() => {
-      const now = Date.now()
+    let reading = false
+    let finished = false
+    let slowReadNoted = false
+    // Aborted when the command ends or on Ctrl+C: cancels a pending table read
+    // and stops kill retries.
+    const ended = new AbortController()
+    runEnds.add(ended)
+    const watchOnce = async () => {
+      const startedAt = Date.now()
       let snapshot
       try {
-        snapshot = (stall.readUnits ?? watchedUnits)(child.pid, watch)
+        snapshot = await (stall.readUnits ?? watchedUnits)(child.pid, watch, ended.signal)
         tableFailures = 0
       } catch (error) {
+        if (finished) return
         tableFailures += 1
         const reason = error instanceof Error ? error.message : String(error)
         if (tableFailures < PROCESS_TABLE_FAILURE_LIMIT) {
           note(`\n⚠ 看门狗这一轮读不到进程状态，下一轮重试（${tableFailures}/${PROCESS_TABLE_FAILURE_LIMIT}）：${reason}\n`)
         } else if (tableFailures === PROCESS_TABLE_FAILURE_LIMIT) {
-          stalls += 1
+          // Not a stall: the command itself may be healthy. Counted apart, so
+          // the run reports a blind watchdog instead of blaming the command.
+          blind += 1
           note(`\n⚠ 看门狗连续 ${tableFailures} 次读不到进程状态，无法判断是否卡住，结束它：${reason}\n`)
-          void killTree(child.pid)
+          void endTree(child.pid)
         }
         return
       }
-      for (const unit of detector(now, snapshot)) {
+      if (finished) return
+      // A slow read is load, not a stall: the detector measures CPU time, so a
+      // late sample stays valid. Said once, so a busy build does not look like
+      // a broken watchdog in the log.
+      const readMs = Date.now() - startedAt
+      if (!slowReadNoted && readMs >= 15_000) {
+        slowReadNoted = true
+        note(`\n⚠ 看门狗：这次读进程表用了 ${formatDuration(readMs)}，机器正忙；读得慢不算卡住。\n`)
+      }
+      for (const unit of detector(Date.now(), snapshot)) {
         stalls += 1
         note(`\n⚠ 看门狗：这条命令已经 ${formatDuration(unit.idleMs)} 没有进展（整棵进程树的 CPU 时间只增加了 ${unit.cpuGrowth.toFixed(1)} 秒），判定为卡住，结束它：\n  ${unit.command.slice(0, 300)}\n`)
-        void killTree(unit.pid)
+        void endTree(unit.pid)
       }
-    }, stall.pollMs ?? 30_000) : null
+    }
+    // The watchdog and the timeout decide once, so a kill that fails must be
+    // retried here: nothing else would ever try again, and the run would hang.
+    const ending = new Set()
+    const endTree = async pid => {
+      if (ending.has(pid)) return
+      ending.add(pid)
+      try {
+        // Once the command has ended (or Ctrl+C took over) the PID is no longer
+        // ours to kill: stop before each attempt, and cut the wait short.
+        for (let round = 1; round <= KILL_ROUNDS && !ended.signal.aborted; round += 1) {
+          if (await kill(pid) || ended.signal.aborted) return
+          note(`\n⚠ 没能结束进程 ${pid}（第 ${round}/${KILL_ROUNDS} 轮）${round < KILL_ROUNDS ? '，稍后再试' : '，放弃，请手动结束它'}\n`)
+          if (round < KILL_ROUNDS) await sleep(killRetryMs, ended.signal)
+        }
+      } finally { ending.delete(pid) }
+    }
+    // Ticks that a slow read runs into are skipped, so two reads never run at
+    // once, and the event loop keeps forwarding the agent's output meanwhile.
+    const pollTick = async () => {
+      if (reading || finished) return
+      reading = true
+      try { await watchOnce() }
+      catch (error) { note(`\n⚠ 看门狗出错，这一轮跳过：${error instanceof Error ? error.message : String(error)}\n`) }
+      finally { reading = false }
+    }
+    const poll = detector ? setInterval(() => { void pollTick() }, stall.pollMs ?? 30_000) : null
     const timer = timeoutMs ? setTimeout(() => {
       timedOut = true
       note(`\n⏱ 超过 ${formatDuration(timeoutMs)}，结束进程。\n`)
-      void killTree(child.pid)
+      void endTree(child.pid)
     }, timeoutMs) : null
     const done = result => {
+      finished = true
+      ended.abort()
+      runEnds.delete(ended)
       clearTimeout(timer)
       clearInterval(poll)
       runningRoots.delete(child.pid)
@@ -780,8 +905,8 @@ export function run(command, args, { logFile, shell = false, timeoutMs, cwd = ro
     }
     child.stdout.on('data', forward(process.stdout))
     child.stderr.on('data', forward(process.stderr))
-    child.on('close', code => done({ code: code ?? 1, timedOut, stalls }))
-    child.on('error', error => { process.stderr.write(`${error.message}\n`); done({ code: 1, timedOut, stalls }) })
+    child.on('close', code => done({ code: code ?? 1, timedOut, stalls, blind }))
+    child.on('error', error => { process.stderr.write(`${error.message}\n`); done({ code: 1, timedOut, stalls, blind }) })
   })
 }
 
@@ -790,19 +915,35 @@ export function run(command, args, { logFile, shell = false, timeoutMs, cwd = ro
 // everything it started before exiting, so nothing keeps running orphaned.
 let onInterrupt = null
 let interrupting = false
-// `afterStop` runs once everything is stopped, before exiting; other drivers
-// (scripts/refine-plan.mjs) pass their own.
-export function installInterruptHandler(afterStop = () => {
+// Kills every tree and names the roots that survived every attempt, so nobody
+// reads "all stopped" while something still runs. Resolves those PIDs.
+export async function stopTrees(pids, kill = killTree) {
+  const results = await Promise.all(pids.map(async pid => ({ pid, gone: await kill(pid) })))
+  const survivors = results.filter(result => !result.gone).map(result => result.pid)
+  if (survivors.length > 0) {
+    const how = process.platform === 'win32' ? 'taskkill /PID <pid> /T /F' : 'kill -9 <pid>'
+    process.stderr.write(`\n⚠ 这些进程没能结束，请手动结束（${how}）：${survivors.join('、')}\n`)
+  }
+  return survivors
+}
+
+// The first words of an afterStop message: whether everything is really gone.
+export const stoppedNote = survivors => survivors.length > 0 ? '其余进程已结束。' : '已全部结束。'
+
+// `afterStop(survivors)` runs once everything is stopped, before exiting, with
+// the PIDs that could not be killed; other drivers (scripts/refine-plan.mjs)
+// pass their own.
+export function installInterruptHandler(afterStop = survivors => {
   onInterrupt?.()
-  process.stderr.write('已全部结束。工作区里的改动保留，之后可以用 --resume 让 agent 接着上次的半成品做；实现已完成、只差审查时用 --review。\n')
+  process.stderr.write(`${stoppedNote(survivors)}工作区里的改动保留，之后可以用 --resume 让 agent 接着上次的半成品做；实现已完成、只差审查时用 --review。\n`)
   printReport()
 }) {
   const handler = async signal => {
     if (interrupting) process.exit(130)
     interrupting = true
     process.stderr.write(`\n收到 ${signal}，正在结束 opencode 和它启动的全部进程……（再按一次 Ctrl+C 立即退出）\n`)
-    await Promise.all([...runningRoots].map(pid => killTree(pid)))
-    afterStop()
+    for (const end of runEnds) end.abort()
+    afterStop(await stopTrees([...runningRoots]))
     process.exit(130)
   }
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, handler)
@@ -876,8 +1017,8 @@ async function main() {
   // The watchdog judges a command stuck by the CPU time in the process table. Where
   // that cannot be read (typically a sandbox that blocks ps) it would end the agent
   // minutes in, so it is better to say so before anything starts.
-  try { processTable() } catch (error) {
-    fail(`看门狗靠读取进程表判断命令有没有卡住，但这里读不到：${error.message}\n  请在能运行 ps 的终端里启动（沙箱里常被禁止）。`, null, false)
+  try { await readProcessTable() } catch (error) {
+    fail(`看门狗靠读取进程表判断命令有没有卡住，但这里读不到：${error.message}\n  请在能运行 ${process.platform === 'win32' ? 'PowerShell 和 WMI' : 'ps'} 的终端里启动（沙箱里常被禁止）。`, null, false)
   }
   mkdirSync(logsDir, { recursive: true })
   installInterruptHandler()
@@ -956,6 +1097,7 @@ async function main() {
       agentMs = Date.now() - agentStarted
       stalls += agent.stalls
       if (agent.timedOut) finish('timeout', `opencode 超过 ${options.agentTimeoutHours} 小时没有结束，已终止。`)
+      if (agent.blind) finish('failed', `看门狗连续读不到进程状态，无法判断 agent 是否卡住，已结束它。日志：${logFile}`)
       if (agent.code !== 0) finish('failed', `opencode 以退出码 ${agent.code} 结束。`)
       if (statusOf(milestone) !== 'approved-uncommitted') {
         finish('failed', `${target.spec}/STATUS 没有写入 APPROVED：实现或审查没有完成，看日志了解原因。`)
@@ -971,6 +1113,7 @@ async function main() {
       acceptanceMs = Date.now() - acceptanceStarted
       stalls += result.stalls
       if (result.timedOut) finish('timeout', `验收命令超过 ${options.commandTimeoutMinutes} 分钟：${command}`)
+      if (result.blind) finish('failed', `看门狗连续读不到进程状态，无法判断验收命令是否卡住，已结束它：${command}`)
       if (result.stalls) finish('failed', `验收命令卡住（${options.stallMinutes} 分钟没有进展），被看门狗结束：${command}`)
       if (result.code !== 0) finish('failed', `验收命令失败：${command}`)
     }
