@@ -3,7 +3,7 @@ description: Fallback reviewer (same rules as reviewer), used only when the prim
 mode: subagent
 
 # Keep identical to reviewer.md except description and model.
-model: blackaicoding/claude-opus-5#xhigh
+model: blackaicoding/claude-opus-5
 
 # OpenCode v2 permission rules: the LAST matching rule wins, so the catch-all
 # deny comes first and the exceptions follow it. Read-only: no edits, no

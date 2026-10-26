@@ -3,7 +3,7 @@ description: Fallback plan reviewer (same rules as plan-reviewer), used only whe
 mode: subagent
 
 # Keep identical to plan-reviewer.md except description and model.
-model: blackaicoding/claude-opus-5#xhigh
+model: blackaicoding/claude-opus-5
 
 # OpenCode v2 permission rules: the LAST matching rule wins, so the catch-all
 # deny comes first and the exceptions follow it. Read-only: no edits, no

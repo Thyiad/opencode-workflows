@@ -251,7 +251,7 @@ test('the example agents and command: editor drives, reviewer and fallback stay 
   const reviewer = read('.opencode/agents/plan-reviewer.md')
   const fallback = read('.opencode/agents/plan-reviewer-fallback.md')
   for (const [name, text] of [['plan-reviewer', reviewer], ['plan-reviewer-fallback', fallback], ['plan-editor', editor]]) {
-    assert.match(splitFrontmatter(text).fields.model ?? '', /^[\w-]+\/[\w.-]+#\w+$/u, name)
+    assert.match(splitFrontmatter(text).fields.model ?? '', /^[\w-]+\/[\w.-]+(#\w+)?$/u, name)
   }
   assert.equal(splitFrontmatter(reviewer).fields.mode, 'subagent')
   assert.doesNotMatch(reviewer, /action: (edit|subagent)[^\n]*effect: allow/u, 'the reviewer stays read-only')
@@ -556,7 +556,7 @@ test('end to end: the fallback reviewer is named in the report; --also reaches t
   writeFileSync(join(dir, 'docs/API.md'), '# API\n')
   const { code, output } = await runRefine(dir, ['specs/35-foo', '--also', 'docs/API.md'], { FAKE_FALLBACK: '1' })
   assert.equal(code, 0, output)
-  assert.match(report(dir), /blackaicoding\/claude-opus-5#xhigh/u)
+  assert.match(report(dir), /`blackaicoding\/claude-opus-5`/u)
   const runDir = readdirSync(join(dir, '.plan-refine-logs')).find(name => !name.endsWith('.log'))
   assert.ok(existsSync(join(dir, '.plan-refine-logs', runDir, 'baseline/docs/API.md')))
 }))

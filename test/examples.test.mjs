@@ -15,7 +15,7 @@ const strip = text => text.split('\n').filter(line => !/^(description|model):|^#
 test('every example agent names a model and denies everything it does not allow', () => {
   for (const file of readdirSync(join(examples, '.opencode', 'agents'))) {
     const text = read(`agents/${file}`)
-    assert.match(splitFrontmatter(text).fields.model ?? '', /^[\w-]+\/[\w.-]+#\w+$/u, file)
+    assert.match(splitFrontmatter(text).fields.model ?? '', /^[\w-]+\/[\w.-]+(#\w+)?$/u, file)
     assert.match(text, /^permissions:\n {2}- \{ action: "\*", resource: "\*", effect: deny \}/mu, `${file}: the catch-all deny comes first`)
   }
 })
