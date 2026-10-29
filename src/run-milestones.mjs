@@ -578,11 +578,23 @@ export async function readProcessTable(timeoutMs = TABLE_READ_TIMEOUT_MS, signal
   return parseProcessTable(result)
 }
 
+// PowerShell writes errors to a redirected stderr as CLIXML in the console code
+// page: hundreds of characters of markup around mojibake. The HRESULT is the
+// part worth showing.
+export function powershellError(stderr) {
+  const text = String(stderr ?? '').trim()
+  const hresult = /HRESULT (0x[0-9a-f]{8})/iu.exec(text)?.[1].toLowerCase()
+  if (hresult === '0x80041032') return 'WMI 查询被取消（HRESULT 0x80041032），通常是机器太忙，WMI 没有响应'
+  if (hresult) return `WMI 查询失败（HRESULT ${hresult}）`
+  if (!text.startsWith('#< CLIXML')) return text
+  return text.slice('#< CLIXML'.length).replace(/_x000D__x000A_/gu, ' ').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 300)
+}
+
 function parseProcessTable(result) {
   if (process.platform === 'win32') {
     const fail = reason => new Error(`无法读取 Windows 进程表：${reason}`)
     if (result.error || result.status !== 0) {
-      throw fail(result.error?.message ?? (result.stderr?.trim() || `powershell 以退出码 ${result.status} 结束`))
+      throw fail(result.error?.message ?? (powershellError(result.stderr) || `powershell 以退出码 ${result.status} 结束`))
     }
     const output = result.stdout.trim()
     if (!output) throw fail('powershell 没有列出任何进程')
@@ -775,7 +787,9 @@ async function watchedUnits(rootPid, mode, signal) {
 }
 
 // Reading the process table can fail transiently (a slow WMI query on a busy
-// Windows machine). Only this many failures in a row end the command.
+// Windows machine). After this many failures in a row the watchdog says once
+// that it is blind. It never ends a command for that: an unreadable table says
+// nothing about the command, and the timeout still bounds it.
 export const PROCESS_TABLE_FAILURE_LIMIT = 3
 
 const runningRoots = new Set()
@@ -795,7 +809,8 @@ const KILL_ROUNDS = 3
 // `readUnits(rootPid, watch, signal)` (may return a promise) replaces the
 // process-table read in tests, `kill(pid)` replaces killTree.
 // `stalls` counts commands the watchdog ended for making no progress; `blind`
-// counts the ones it ended because it could not read the process table at all.
+// counts the stretches in which it could not read the process table at all
+// (the command kept running through them).
 export function run(command, args, { logFile, shell = false, timeoutMs, cwd = root, watch = null, stall = null, input,
   kill = killTree, killRetryMs = 10_000 } = {}) {
   return new Promise((resolvePromise) => {
@@ -831,7 +846,6 @@ export function run(command, args, { logFile, shell = false, timeoutMs, cwd = ro
       let snapshot
       try {
         snapshot = await (stall.readUnits ?? watchedUnits)(child.pid, watch, ended.signal)
-        tableFailures = 0
       } catch (error) {
         if (finished) return
         tableFailures += 1
@@ -839,15 +853,16 @@ export function run(command, args, { logFile, shell = false, timeoutMs, cwd = ro
         if (tableFailures < PROCESS_TABLE_FAILURE_LIMIT) {
           note(`\n⚠ 看门狗这一轮读不到进程状态，下一轮重试（${tableFailures}/${PROCESS_TABLE_FAILURE_LIMIT}）：${reason}\n`)
         } else if (tableFailures === PROCESS_TABLE_FAILURE_LIMIT) {
-          // Not a stall: the command itself may be healthy. Counted apart, so
-          // the run reports a blind watchdog instead of blaming the command.
+          // Not a stall: the command itself may be healthy, and ending it
+          // would throw its work away. It keeps running; the timeout bounds it.
           blind += 1
-          note(`\n⚠ 看门狗连续 ${tableFailures} 次读不到进程状态，无法判断是否卡住，结束它：${reason}\n`)
-          void endTree(child.pid)
+          note(`\n⚠ 看门狗连续 ${tableFailures} 次读不到进程状态，暂时无法判断是否卡住；命令继续运行，由超时兜底，恢复后会再提示：${reason}\n`)
         }
         return
       }
       if (finished) return
+      if (tableFailures >= PROCESS_TABLE_FAILURE_LIMIT) note('\n✓ 看门狗重新读到了进程状态，继续监控。\n')
+      tableFailures = 0
       // A slow read is load, not a stall: the detector measures CPU time, so a
       // late sample stays valid. Said once, so a busy build does not look like
       // a broken watchdog in the log.
@@ -1099,7 +1114,6 @@ async function main() {
       agentMs = Date.now() - agentStarted
       stalls += agent.stalls
       if (agent.timedOut) finish('timeout', `opencode 超过 ${options.agentTimeoutHours} 小时没有结束，已终止。`)
-      if (agent.blind) finish('failed', `看门狗连续读不到进程状态，无法判断 agent 是否卡住，已结束它。日志：${logFile}`)
       if (agent.code !== 0) finish('failed', `opencode 以退出码 ${agent.code} 结束。`)
       if (statusOf(milestone) !== 'approved-uncommitted') {
         finish('failed', `${target.spec}/STATUS 没有写入 APPROVED：实现或审查没有完成，看日志了解原因。`)
@@ -1115,7 +1129,6 @@ async function main() {
       acceptanceMs = Date.now() - acceptanceStarted
       stalls += result.stalls
       if (result.timedOut) finish('timeout', `验收命令超过 ${options.commandTimeoutMinutes} 分钟：${command}`)
-      if (result.blind) finish('failed', `看门狗连续读不到进程状态，无法判断验收命令是否卡住，已结束它：${command}`)
       if (result.stalls) finish('failed', `验收命令卡住（${options.stallMinutes} 分钟没有进展），被看门狗结束：${command}`)
       if (result.code !== 0) finish('failed', `验收命令失败：${command}`)
     }

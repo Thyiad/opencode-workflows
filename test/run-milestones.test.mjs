@@ -456,11 +456,14 @@ test('Windows agent units are the outermost shells under the agent', async () =>
   assert.deepEqual(units.find(unit => unit.pid === 12).processes.map(row => row.pid).sort(), [12, 13, 14, 15])
 })
 
-test('the watchdog tolerates a few failed process-table reads before ending the command', async () => {
+test('the watchdog never ends a command because it cannot read the process table', async () => {
   const { run, PROCESS_TABLE_FAILURE_LIMIT } = await import('../src/run-milestones.mjs')
+  const kills = []
+  const kill = async pid => { kills.push(pid); return true }
   let reads = 0
   const flaky = await run(process.execPath, ['-e', 'setTimeout(() => {}, 1500)'], {
     watch: 'command',
+    kill,
     stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 200, readUnits: () => {
       reads += 1
       if (reads % 2 === 1) throw new Error('临时失败')
@@ -469,18 +472,24 @@ test('the watchdog tolerates a few failed process-table reads before ending the 
   })
   assert.equal(flaky.code, 0)
   assert.equal(flaky.stalls, 0)
+  assert.equal(flaky.blind, 0)
 
-  const started = Date.now()
-  const broken = await run(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], {
+  // Blind for a stretch, then readable again, then blind again: two stretches.
+  reads = 0
+  const blindThenBack = await run(process.execPath, ['-e', 'setTimeout(() => {}, 2000)'], {
     watch: 'command',
-    timeoutMs: 20_000,
-    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 200, readUnits: () => { throw new Error('一直失败') } },
+    kill,
+    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 50, readUnits: () => {
+      reads += 1
+      if (reads <= PROCESS_TABLE_FAILURE_LIMIT + 2 || reads > PROCESS_TABLE_FAILURE_LIMIT + 4) throw new Error('一直失败')
+      return []
+    } },
   })
-  assert.equal(broken.timedOut, false)
-  assert.equal(broken.stalls, 0)
-  assert.equal(broken.blind, 1)
-  assert.notEqual(broken.code, 0)
-  assert.ok(Date.now() - started < 10_000, `ended after ${PROCESS_TABLE_FAILURE_LIMIT} failed reads`)
+  assert.equal(blindThenBack.code, 0, 'the command ran to its own end')
+  assert.equal(blindThenBack.timedOut, false)
+  assert.equal(blindThenBack.stalls, 0)
+  assert.equal(blindThenBack.blind, 2)
+  assert.deepEqual(kills, [])
 })
 
 test('the watchdog awaits process-table reads without overlapping them', async () => {
@@ -528,15 +537,14 @@ test('a kill that leaves the command running is retried', async () => {
   const kills = []
   const started = Date.now()
   const result = await run(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], {
-    watch: 'command',
-    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 50, readUnits: () => { throw new Error('一直失败') } },
+    timeoutMs: 200,
     killRetryMs: 50,
     kill: async pid => {
       kills.push(pid)
       return kills.length > 1 && killTree(pid)
     },
   })
-  assert.equal(result.blind, 1)
+  assert.equal(result.timedOut, true)
   assert.notEqual(result.code, 0)
   assert.equal(kills.length, 2)
   assert.ok(Date.now() - started < 15_000)
@@ -546,8 +554,7 @@ test('kill retries stop once the command has ended on its own', async () => {
   const { run } = await import('../src/run-milestones.mjs')
   const kills = []
   const result = await run(process.execPath, ['-e', 'setTimeout(() => {}, 600)'], {
-    watch: 'command',
-    stall: { windowMs: 60_000, minCpuSeconds: 0, pollMs: 20, readUnits: () => { throw new Error('一直失败') } },
+    timeoutMs: 100,
     killRetryMs: 300,
     kill: async pid => { kills.push(pid); return false },
   })
@@ -758,4 +765,15 @@ test('milestone commit subjects pass commitlint\'s subject-case: no upper-case f
   for (const title of ['M01：OAuth 客户端学校范围', 'M12：Admin UI', 'M3: Plain title']) {
     assert.doesNotMatch(commitHeader({ number: '01', title }).replace(/^[^:]+: /u, ''), /^[A-Z]/u, title)
   }
+})
+
+test('PowerShell CLIXML errors are reduced to their HRESULT', async () => {
+  const { powershellError } = await import('../src/run-milestones.mjs')
+  const cancelled = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">Get-CimInstance : ���_x000D__x000A_</S>'
+    + '<S S="Error">    + FullyQualifiedErrorId : HRESULT 0x80041032,Microsoft.Management.Infrastructure.CimCmdlets.GetCimInstanceCommand_x000D__x000A_</S></Objs>'
+  assert.match(powershellError(cancelled), /WMI 查询被取消（HRESULT 0x80041032）/u)
+  assert.equal(powershellError(cancelled.replace('0x80041032', '0x8004100E')), 'WMI 查询失败（HRESULT 0x8004100e）')
+  assert.equal(powershellError('#< CLIXML\r\n<Objs><S S="Error">出错了_x000D__x000A_</S></Objs>'), '出错了')
+  assert.equal(powershellError('  plain text \n'), 'plain text')
+  assert.equal(powershellError(undefined), '')
 })
