@@ -158,10 +158,11 @@ export function stillReviewed(reportText, documents, current, acceptDecisions = 
 
 // The commit of an approved plan, scoped like the milestone's own commit
 // (commitHeader in run-milestones.mjs). The subject starts with Chinese, so
-// commitlint's subject-case holds whatever the title is.
+// commitlint's subject-case holds whatever the title is. Each path gets a line
+// of its own: body-max-line-length (100) cannot hold a long spec name twice.
 export function planCommitMessage({ number, title, spec, cross }) {
   const subject = `完善 plan：${title.replace(/^M\d+[：:]\s*/u, '')}`
-  return `${cross ? 'docs' : `docs(M${number})`}: ${subject}\n\n${spec}/plan.md 经 refine-plan 无人值守评审通过，记录见 ${spec}/${REPORT_FILE}。`
+  return `${cross ? 'docs' : `docs(M${number})`}: ${subject}\n\n经 refine-plan 无人值守评审通过。\nplan：${spec}/plan.md\n评审记录：${spec}/${REPORT_FILE}`
 }
 
 // What one milestone needs: 'skip' (implemented), 'refine' (review the plan

@@ -60,8 +60,13 @@ test('an approved report is recognised by its result row only', () => {
 test('the plan commit keeps the title, starts its subject in Chinese and names the report', () => {
   const message = planCommitMessage({ number: '35', title: 'M35：OAuth 登录', spec: 'specs/35-foo', cross: false })
   assert.equal(message.split('\n')[0], 'docs(M35): 完善 plan：OAuth 登录')
-  assert.match(message, /specs\/35-foo\/plan\.md 经 refine-plan 无人值守评审通过，记录见 specs\/35-foo\/refine-report\.md。/u)
+  assert.deepEqual(message.split('\n').slice(2), ['经 refine-plan 无人值守评审通过。', 'plan：specs/35-foo/plan.md', '评审记录：specs/35-foo/refine-report.md'])
   assert.equal(planCommitMessage({ number: '25', title: 'M25：占位', spec: 'specs/foo', cross: true }).split('\n')[0], 'docs: 完善 plan：占位')
+})
+
+test('the plan commit body fits commitlint\'s body-max-line-length with a long spec name', () => {
+  const message = planCommitMessage({ number: '04', title: 'M04：harness 新增 4 个工作量数据集', spec: 'specs/04-harness-ops-datasets', cross: false })
+  for (const line of message.split('\n')) assert.ok(line.length <= 100, line)
 })
 
 test('a plan is committed only as it was reviewed', () => {
