@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { claudeArgs, decisionSchema, parseClaudeOutput, sessionLines } from '../src/claude.mjs'
+import { HANDOVER_PROMPT, claudeArgs, decisionSchema, handoverArgs, parseClaudeOutput, sessionLines } from '../src/claude.mjs'
 
 const answer = next => JSON.stringify({
   type: 'result', subtype: 'success', is_error: false, session_id: 's-1',
@@ -22,4 +22,10 @@ test('the takeover lines: already open here, or how to open it', () => {
   assert.match(lines, /先在电脑上运行下面第二条命令/u)
   assert.match(lines, /在 \/repo 运行 claude --resume s-1/u)
   assert.match(lines, /claude --resume s-1 --remote-control "M35 plan 待处理"/u)
+})
+
+test('the reopened session starts by asking for what the user has to decide', () => {
+  const args = handoverArgs({ id: 's-1', title: 'M35 plan 待处理' })
+  assert.deepEqual(args, ['--resume', 's-1', '--remote-control', 'M35 plan 待处理', HANDOVER_PROMPT])
+  assert.match(HANDOVER_PROMPT, /需要我决定或处理的问题/u)
 })

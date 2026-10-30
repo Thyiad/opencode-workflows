@@ -155,8 +155,25 @@ export function runClaude({ prompt, sessionId, resume, name, addDirs = [], timeo
 // Only in a terminal: the session is reopened there, interactively.
 export const canHandover = () => Boolean(process.stdin.isTTY && process.stdout.isTTY)
 
+// Sent as the first message of the reopened session. The headless round ends
+// in a structured answer, so without it the user would find the wrapper's
+// instructions and a tool call at the bottom instead of what to decide.
+export const HANDOVER_PROMPT = [
+  '我接管了这个会话。请先用简体中文简短交代：',
+  '1. 需要我决定或处理的问题，每项写清选项、各自的后果和你的建议；',
+  '2. 你已经做了什么（一两句）。',
+  '直接按你刚才的结论回答，不要重新调查，回复前也不要修改任何文件，等我答复后再动手。',
+].join('\n')
+
+// The prompt goes last: --remote-control takes an optional value, and the
+// title has already filled it.
+export function handoverArgs(session) {
+  return ['--resume', session.id, '--remote-control', session.title, HANDOVER_PROMPT]
+}
+
 // Reopens `session` ({ id, title }) in this terminal with Remote Control, so
-// the user takes over here or from the Claude app. Resolves claude's exit code.
+// the user takes over here or from the Claude app, and asks it for a summary.
+// Resolves claude's exit code.
 export function handover(session, cwd) {
   process.stdout.write([
     '',
@@ -168,7 +185,7 @@ export function handover(session, cwd) {
   return new Promise(resolvePromise => {
     let bin
     try { bin = resolveClaudeBin() } catch (error) { process.stderr.write(`${error.message}\n`); resolvePromise(1); return }
-    const child = spawn(bin, ['--resume', session.id, '--remote-control', session.title], { cwd, stdio: 'inherit' })
+    const child = spawn(bin, handoverArgs(session), { cwd, stdio: 'inherit' })
     child.on('close', code => resolvePromise(code ?? 1))
     child.on('error', error => { process.stderr.write(`无法启动 claude：${error.message}\n`); resolvePromise(1) })
   })
