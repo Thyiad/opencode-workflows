@@ -221,6 +221,13 @@ function git(args, { allowFailure = false, cwd = root } = {}) {
   return result.status === 0 ? result.stdout : null
 }
 
+// Commits what is staged in `cwd`: null, or why it failed. A commit-msg hook
+// such as commitlint writes its reasons to stdout, so both streams are kept.
+export function commitStaged(cwd, message) {
+  const result = spawnSync('git', ['commit', '-q', '-m', message], { cwd, encoding: 'utf8' })
+  return result.status === 0 ? null : `${result.stdout ?? ''}${result.stderr ?? ''}`.trim() || `退出码 ${result.status}`
+}
+
 // Commits of `cwd` that its upstream does not have yet; null when the branch has
 // no upstream.
 export function unpushedCommits(cwd) {
@@ -1137,8 +1144,10 @@ async function main() {
     git(['add', '-A', '--', '.'], { cwd: target.cwd })
     const timing = `耗时：实现与审查 ${formatDuration(agentMs)}，验收 ${formatDuration(acceptanceMs)}，合计 ${formatDuration(Date.now() - started)}。`
     const header = commitHeader({ number: milestone.number, title, cross: target.cross, scope: targetConfig.commitScope })
-    const message = `${header}\n\n按 ${target.spec}/plan.md 实现，经 opencode 实现与审查工作流完成并通过验收命令。\n${timing}`
-    git(['commit', '-q', '-m', message], { cwd: target.cwd })
+    const message = `${header}\n\n经 opencode 实现与审查工作流完成并通过验收命令。\nplan：${target.spec}/plan.md\n${timing}`
+    const refused = commitStaged(target.cwd, message)
+    // STATUS stays APPROVED: running again re-runs the acceptance commands and commits.
+    if (refused) finish('failed', `git commit 失败（${target.cwd}）：\n${refused}\n  改动已暂存，审查已通过；修好后重跑会重新验收再提交。`)
     finish('committed')
     process.stdout.write(`✓ 已提交（${target.cwd}）：${git(['log', '--oneline', '-1'], { cwd: target.cwd }).trim()}\n  ${timing}\n`)
     if (options.push) pushOrFail([target.cwd], `${milestone.name} 已提交`, options)

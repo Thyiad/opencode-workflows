@@ -692,6 +692,25 @@ test('--push catches up on commits an earlier push left behind', async () => {
   }
 })
 
+test('a refused milestone commit says why, from the hook\'s stdout too', async () => {
+  const { commitStaged } = await import('../src/run-milestones.mjs')
+  const directory = mkdtempSync(join(tmpdir(), 'run-milestones-commit-'))
+  try {
+    const { work, git, commit } = scratchRepository(directory, 'work', 'dev')
+    commit('one')
+    writeFileSync(join(work, 'two.txt'), 'two')
+    git('add', 'two.txt')
+    mkdirSync(join(work, 'hooks'))
+    writeFileSync(join(work, 'hooks', 'commit-msg'), '#!/bin/sh\necho "body\'s lines must not be longer than 100 characters"\nexit 1\n', { mode: 0o755 })
+    git('config', 'core.hooksPath', 'hooks')
+    assert.match(commitStaged(work, 'feat(M01): 示例'), /body's lines must not be longer than 100 characters/u)
+    git('config', '--unset', 'core.hooksPath')
+    assert.equal(commitStaged(work, 'feat(M01): 示例'), null)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('--push leaves master and main alone without --allow-main, in every repository, before pushing any', async () => {
   const { protectedBranch, pushPending, unpushedCommits } = await import('../src/run-milestones.mjs')
   const directory = mkdtempSync(join(tmpdir(), 'run-milestones-protected-'))
